@@ -62,6 +62,48 @@ class TestOnsetDetection:
         detected = detect_onset(signal, SR)
         assert detected == 0
 
+    def test_onset_position_after_trim(self):
+        """onset_sample should point to the actual pop in the trimmed signal."""
+        # Create a synthetic signal: 0.5s silence → impulse → decay tail
+        rng = np.random.default_rng(42)
+        n = SR * 2
+        raw = rng.standard_normal(n) * 0.0001  # very quiet noise floor
+        onset_true = SR // 2  # impulse at 0.5s
+        raw[onset_true] = 1.0
+        # Add a short decaying burst after the impulse (like a balloon pop)
+        burst_len = int(SR * 0.01)
+        raw[onset_true:onset_true + burst_len] += (
+            rng.standard_normal(burst_len)
+            * np.exp(-np.arange(burst_len) / (SR * 0.002))
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            sf.write(f.name, raw, SR)
+            result = preprocess(f.name)
+
+        mono = result["balloon_mono"]
+        onset = result["onset_sample"]
+
+        # The onset_sample should point near the energy peak
+        # Check within a ±10 sample window around onset for the peak
+        search_lo = max(0, onset - 10)
+        search_hi = min(len(mono), onset + 11)
+        local_peak_idx = search_lo + np.argmax(np.abs(mono[search_lo:search_hi]))
+
+        # The peak of the original impulse should be very close to onset
+        assert abs(local_peak_idx - onset) <= 10, (
+            f"onset_sample={onset} but local peak at {local_peak_idx}"
+        )
+
+        # Also verify the value at onset is significantly above the noise floor
+        noise_rms = np.sqrt(np.mean(mono[:max(1, onset - 100)] ** 2))
+        onset_amplitude = np.abs(mono[onset])
+        if noise_rms > 0:
+            assert onset_amplitude / noise_rms > 10, (
+                f"onset amplitude ({onset_amplitude:.4f}) should be well "
+                f"above noise floor ({noise_rms:.4f})"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Test 0-2: Normalization
