@@ -195,3 +195,63 @@ class TestFrequencyLayout:
         """Should produce a reasonable number of bands (roughly 25-30 at 48kHz)."""
         centers, _ = compute_band_frequencies(SR)
         assert 20 <= len(centers) <= 35, f"Got {len(centers)} bands"
+
+
+# ---------------------------------------------------------------------------
+# Transition slope verification
+# ---------------------------------------------------------------------------
+
+class TestTransitionSlope:
+    """
+    Verify the effective rolloff rate of the filter bank.
+
+    The paper (§5.1) claims 60 dB/octave transitions. With 3rd-order
+    Butterworth + forward-backward (6th effective order), the theoretical
+    slope is ~36 dB/octave (6 × 6 dB/octave per pole). The subtraction
+    scheme may provide additional stopband rejection where adjacent
+    lowpass filters overlap.
+
+    We measure the actual slope by feeding sine waves at known offsets
+    from a crossover frequency and checking attenuation in the band
+    that should reject them.
+    """
+
+    def test_rolloff_one_octave_away(self):
+        """Signal one octave above the band's upper edge should be
+        attenuated by at least 30 dB in that band.
+
+        For a band with upper crossover at f_c, a sine at 2*f_c
+        (one octave away) should be heavily attenuated.
+        At ~36 dB/octave, we expect ~36 dB attenuation.
+        We use a conservative threshold of 30 dB.
+        """
+        bands, centers, crossovers = apply_filterbank(
+            np.zeros(SR), SR  # dummy call to get frequencies
+        )
+
+        # Pick a mid-range crossover (avoid edge effects)
+        mid_idx = len(crossovers) // 2
+        f_cross = crossovers[mid_idx]
+        f_test = f_cross * 2.0  # one octave above
+
+        # Skip if test frequency exceeds Nyquist
+        if f_test >= SR / 2:
+            pytest.skip("Test frequency above Nyquist")
+
+        # Generate sine at the test frequency
+        t = np.arange(SR * 2) / SR
+        signal = np.sin(2 * np.pi * f_test * t)
+
+        bands, centers, _ = apply_filterbank(signal, SR)
+
+        # The band just below the crossover (band at index mid_idx)
+        # should strongly reject this frequency
+        band_energy = np.sum(bands[mid_idx] ** 2)
+        total_energy = np.sum(signal ** 2)
+
+        if total_energy > 0 and band_energy > 0:
+            attenuation_db = 10 * np.log10(band_energy / total_energy)
+            assert attenuation_db < -30, (
+                f"Expected >30 dB attenuation at 1 octave, "
+                f"got {-attenuation_db:.1f} dB"
+            )

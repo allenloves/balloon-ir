@@ -24,7 +24,14 @@ Architecture (Fig. 11 in the paper):
 
   Each lowpass uses a 3rd-order Butterworth filter applied via sosfiltfilt
   (forward-backward), yielding an effective 6th-order zero-phase response
-  with 60 dB/octave transition slopes (see paper §5.1, Fig. 12).
+  with ~36 dB/octave transition slopes (6 × 6 dB/octave per pole).
+
+  NOTE: The paper states "60 dB/octave" (§5.1), which would require a
+  5th-order Butterworth (5 × 2 × 6 = 60). The discrepancy may be due
+  to the paper's cascaded band-splitting architecture (Fig. 11) where
+  adjacent filters compound the rolloff. Our subtraction-based scheme
+  achieves ~36 dB/octave per band edge, which is sufficient for clean
+  band separation while guaranteeing perfect reconstruction.
 """
 
 import numpy as np
@@ -117,7 +124,8 @@ def design_lowpass_sos(
     order : int
         Butterworth filter order. Default 3 (paper §5.1).
         After forward-backward (sosfiltfilt), the effective order
-        doubles to 6, giving 60 dB/octave rolloff.
+        doubles to 6, giving ~36 dB/octave rolloff
+        (6 poles × 6 dB/octave per pole).
 
     Returns
     -------
@@ -166,7 +174,8 @@ def apply_filterbank(
         Highest band center frequency in Hz. Default ~0.9 * Nyquist.
     order : int
         Butterworth filter order (before doubling by filtfilt).
-        Default 3 → 6th-order zero-phase → 60 dB/octave.
+        Default 3 → 6th-order zero-phase → ~36 dB/octave.
+        See module docstring for discussion of paper's "60 dB/octave" claim.
 
     Returns
     -------
