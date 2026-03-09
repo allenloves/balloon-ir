@@ -586,8 +586,19 @@ def synthesize_echo_sequence(
             break
 
         # Draw pulse amplitude from Gaussian distribution
-        # Scale so that local energy is roughly constant:
-        # amplitude ∝ 1/√(local_density) to keep energy/time constant
+        # NOTE ON ENERGY SCALING: The paper (§3.2, p.6 above Fig. 8) states
+        # that amplitudes are "scaled according to the local echo density
+        # so as to give a roughly constant energy profile." This would mean
+        # multiplying by 1/√(local_aed) so that energy/time ∝ amplitude² × density
+        # stays constant. We intentionally omit this scaling here because
+        # Stage 3 (energy_shaping.py) applies γ_k(t) = β_k(t)/ν_k(t), which
+        # overwrites the energy profile entirely — matching it to the balloon
+        # recording's measured band energies. Any scaling done here would be
+        # undone by γ_k(t).
+        #
+        # If you need to audition this echo sequence BEFORE Stage 3 (e.g.,
+        # for teaching demonstrations), uncomment the following line:
+        #   amplitude = rng.standard_normal() / np.sqrt(max(local_aed, 1.0))
         amplitude = rng.standard_normal()
 
         echo_seq[current_sample] = amplitude
