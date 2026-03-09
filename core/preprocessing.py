@@ -82,11 +82,26 @@ def detect_onset(
         Index of the detected onset sample.
     """
     window_len = max(1, int(sr * window_ms / 1000.0))
+    n = len(audio_mono)
 
-    # Compute running RMS using a cumulative sum trick for efficiency
+    # Handle signals shorter than window
+    if n <= window_len:
+        peak = np.max(np.abs(audio_mono))
+        if peak == 0:
+            return 0
+        threshold_linear = peak * 10.0 ** (threshold_db / 20.0)
+        indices = np.where(np.abs(audio_mono) >= threshold_linear)[0]
+        return int(indices[0]) if len(indices) > 0 else 0
+
+    # Compute running RMS using a cumulative sum trick for efficiency.
+    # Use a causal window (looking back) so the detected index aligns
+    # with the onset rather than lagging behind it.
     sq = audio_mono ** 2
     cumsum = np.concatenate(([0.0], np.cumsum(sq)))
-    # Running mean of squared values
+
+    # rms[i] = RMS of samples [i : i + window_len]
+    # This is a forward-looking window, so the onset is detected
+    # at the start of the energy burst, not the center.
     rms_sq = (cumsum[window_len:] - cumsum[:-window_len]) / window_len
     rms = np.sqrt(rms_sq)
 
@@ -99,7 +114,29 @@ def detect_onset(
 
     if len(indices) == 0:
         return 0
-    return int(indices[0])
+
+    # Coarse onset from RMS (may be up to window_len samples early
+    # because the window that first contains the onset extends backward)
+    coarse_onset = int(indices[0])
+
+    # Refine: the coarse onset may be up to window_len samples early,
+    # because the RMS window that first contains the true onset extends
+    # backward. Search within [coarse_onset, coarse_onset + window_len]
+    # for the first sample whose absolute amplitude exceeds 10% of the
+    # local peak — this skips low-level background noise and lands on
+    # the actual first energetic sample.
+    refine_start = coarse_onset
+    refine_end = min(n, coarse_onset + window_len)
+    abs_segment = np.abs(audio_mono[refine_start:refine_end])
+    local_peak = np.max(abs_segment)
+
+    if local_peak > 0:
+        amp_threshold = local_peak * 0.1
+        refine_indices = np.where(abs_segment >= amp_threshold)[0]
+        if len(refine_indices) > 0:
+            return refine_start + int(refine_indices[0])
+
+    return coarse_onset
 
 
 def preprocess(
