@@ -59,6 +59,7 @@ def _time_axis(n_samples: int, sr: int) -> np.ndarray:
 def plot_ned_profile(
     result: dict,
     sr: int,
+    onset: int = 0,
     figsize: tuple = (10, 4),
 ) -> plt.Figure:
     """
@@ -74,6 +75,9 @@ def plot_ned_profile(
         Pipeline result from process_balloon().
     sr : int
         Sample rate in Hz.
+    onset : int
+        Onset sample position, used to convert onset-relative times
+        (from early_reflections and transition_time_ms) to absolute.
     figsize : tuple
         Figure size (width, height) in inches.
 
@@ -86,6 +90,7 @@ def plot_ned_profile(
     ned_b = density["ned_balloon"]
     ned_h = density["ned_fullband"]
     t_ms = _time_axis(len(ned_b), sr)
+    onset_ms = onset / sr * 1000
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.plot(t_ms, ned_b, color="#1f77b4", alpha=0.6, linewidth=0.8,
@@ -93,18 +98,19 @@ def plot_ned_profile(
     ax.plot(t_ms, ned_h, color="#d62728", linewidth=1.2,
             label="η_h (full-bandwidth NED)")
 
-    # Mark transition point
+    # Mark transition point (onset-relative → absolute)
     trans_ms = density.get("transition_time_ms")
     if trans_ms is not None:
-        ax.axvline(trans_ms, color="#2ca02c", linestyle="--", linewidth=1,
-                   label=f"Transition @ {trans_ms:.1f} ms")
+        trans_abs = onset_ms + trans_ms
+        ax.axvline(trans_abs, color="#2ca02c", linestyle="--", linewidth=1,
+                   label=f"Transition @ {trans_ms:.1f} ms (re onset)")
 
-    # Mark early reflections
+    # Mark early reflections (onset-relative → absolute)
     refs = density.get("early_reflections", [])
     if refs:
-        ref_times = [r["time_ms"] for r in refs]
-        ref_ned = np.interp(ref_times, t_ms, ned_h)
-        ax.scatter(ref_times, ref_ned, marker="v", color="#ff7f0e", s=30,
+        ref_times_abs = [onset_ms + r["time_ms"] for r in refs]
+        ref_ned = np.interp(ref_times_abs, t_ms, ned_h)
+        ax.scatter(ref_times_abs, ref_ned, marker="v", color="#ff7f0e", s=30,
                    zorder=5, label=f"Early reflections ({len(refs)})")
 
     ax.set_xlabel("Time (ms)")
@@ -405,6 +411,7 @@ def plot_iccc_profile(
 def plot_echo_sequence(
     result: dict,
     sr: int,
+    onset: int = 0,
     figsize: tuple = (10, 4),
 ) -> plt.Figure:
     """
@@ -420,6 +427,9 @@ def plot_echo_sequence(
         Pipeline result from process_balloon().
     sr : int
         Sample rate in Hz.
+    onset : int
+        Onset sample position, used to convert onset-relative times
+        to absolute.
     figsize : tuple
         Figure size in inches.
 
@@ -429,23 +439,31 @@ def plot_echo_sequence(
     """
     _apply_style()
     density = result["echo_density"]
-    echo_seq = density["echo_sequences"][0]  # first (or only) sequence
+    sequences = density.get("echo_sequences", [])
+    if not sequences:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.set_title("Echo Sequence (no data)")
+        return fig
+
+    echo_seq = sequences[0]
     t_ms = _time_axis(len(echo_seq), sr)
+    onset_ms = onset / sr * 1000
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.plot(t_ms, echo_seq, color="#1f77b4", linewidth=0.3, alpha=0.7)
 
-    # Mark early reflections
+    # Mark early reflections (onset-relative → absolute)
     refs = density.get("early_reflections", [])
     for r in refs:
-        ax.axvline(r["time_ms"], color="#ff7f0e", linewidth=0.6,
+        ax.axvline(onset_ms + r["time_ms"], color="#ff7f0e", linewidth=0.6,
                    alpha=0.5)
 
-    # Mark transition
+    # Mark transition (onset-relative → absolute)
     trans_ms = density.get("transition_time_ms")
     if trans_ms is not None:
-        ax.axvline(trans_ms, color="#2ca02c", linestyle="--", linewidth=1.2,
-                   label=f"Transition @ {trans_ms:.1f} ms")
+        ax.axvline(onset_ms + trans_ms, color="#2ca02c", linestyle="--",
+                   linewidth=1.2,
+                   label=f"Transition @ {trans_ms:.1f} ms (re onset)")
 
     ax.set_xlabel("Time (ms)")
     ax.set_ylabel("Amplitude")
@@ -516,19 +534,20 @@ def plot_summary(
     ned_b = density["ned_balloon"]
     ned_h = density["ned_fullband"]
     t_ned = _time_axis(len(ned_b), sr)
+    onset_ms = onset / sr * 1000
     ax_ned.plot(t_ned, ned_b, color="#1f77b4", alpha=0.6, linewidth=0.8,
                 label="η_b (balloon)")
     ax_ned.plot(t_ned, ned_h, color="#d62728", linewidth=1.2,
                 label="η_h (full-bandwidth)")
     trans_ms = density.get("transition_time_ms")
     if trans_ms is not None:
-        ax_ned.axvline(trans_ms, color="#2ca02c", linestyle="--",
-                       linewidth=1, label=f"Transition @ {trans_ms:.1f} ms")
+        ax_ned.axvline(onset_ms + trans_ms, color="#2ca02c", linestyle="--",
+                       linewidth=1, label=f"Transition @ {trans_ms:.1f} ms (re onset)")
     refs = density.get("early_reflections", [])
     if refs:
-        ref_times = [r["time_ms"] for r in refs]
-        ref_ned = np.interp(ref_times, t_ned, ned_h)
-        ax_ned.scatter(ref_times, ref_ned, marker="v", color="#ff7f0e",
+        ref_times_abs = [onset_ms + r["time_ms"] for r in refs]
+        ref_ned = np.interp(ref_times_abs, t_ned, ned_h)
+        ax_ned.scatter(ref_times_abs, ref_ned, marker="v", color="#ff7f0e",
                        s=25, zorder=5, label=f"Early refs ({len(refs)})")
     ax_ned.set_ylim(-0.05, 1.15)
     ax_ned.set_xlabel("Time (ms)")
@@ -630,20 +649,23 @@ def plot_summary(
 
     # --- Row 5: Echo Sequence ---
     ax_echo = fig.add_subplot(gs[4, :])
-    echo_seq = density["echo_sequences"][0]
-    t_echo = _time_axis(len(echo_seq), sr)
-    ax_echo.plot(t_echo, echo_seq, color="#1f77b4", linewidth=0.3,
-                 alpha=0.7)
-    for r in refs:
-        ax_echo.axvline(r["time_ms"], color="#ff7f0e", linewidth=0.5,
-                        alpha=0.5)
-    if trans_ms is not None:
-        ax_echo.axvline(trans_ms, color="#2ca02c", linestyle="--",
-                        linewidth=1, label=f"Transition @ {trans_ms:.1f} ms")
+    sequences = density.get("echo_sequences", [])
+    if sequences:
+        echo_seq = sequences[0]
+        t_echo = _time_axis(len(echo_seq), sr)
+        ax_echo.plot(t_echo, echo_seq, color="#1f77b4", linewidth=0.3,
+                     alpha=0.7)
+        for r in refs:
+            ax_echo.axvline(onset_ms + r["time_ms"], color="#ff7f0e",
+                            linewidth=0.5, alpha=0.5)
+        if trans_ms is not None:
+            ax_echo.axvline(onset_ms + trans_ms, color="#2ca02c",
+                            linestyle="--", linewidth=1,
+                            label=f"Transition @ {trans_ms:.1f} ms (re onset)")
     ax_echo.set_xlabel("Time (ms)")
     ax_echo.set_ylabel("Amplitude")
     ax_echo.set_title("Echo Sequence (Stage 1 output)")
-    if trans_ms is not None:
+    if trans_ms is not None and sequences:
         ax_echo.legend(fontsize=7)
 
     # --- Row 6: ICCC (stereo only) ---
@@ -683,6 +705,7 @@ def save_all_plots(
     sr: int,
     output_dir: str,
     onset: int = 0,
+    energy_window_ms: float = 10.0,
     fmt: str = "png",
     dpi: int = 150,
 ) -> list:
@@ -701,6 +724,8 @@ def save_all_plots(
         Directory to save plots.
     onset : int
         Onset sample position.
+    energy_window_ms : float
+        Smoothing window for band energy plots.
     fmt : str
         Image format (png, pdf, svg).
     dpi : int
@@ -719,7 +744,7 @@ def save_all_plots(
     ir = result["ir"]
 
     # 1. NED
-    fig = plot_ned_profile(result, sr)
+    fig = plot_ned_profile(result, sr, onset=onset)
     p = str(out / f"ned_profile.{fmt}")
     fig.savefig(p, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
@@ -740,14 +765,15 @@ def save_all_plots(
     paths.append(p)
 
     # 4. Band energy
-    fig = plot_band_energy(balloon_mono, ir, sr, onset=onset)
+    fig = plot_band_energy(balloon_mono, ir, sr, onset=onset,
+                           energy_window_ms=energy_window_ms)
     p = str(out / f"band_energy.{fmt}")
     fig.savefig(p, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     paths.append(p)
 
     # 5. Echo sequence
-    fig = plot_echo_sequence(result, sr)
+    fig = plot_echo_sequence(result, sr, onset=onset)
     p = str(out / f"echo_sequence.{fmt}")
     fig.savefig(p, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
@@ -762,7 +788,8 @@ def save_all_plots(
         paths.append(p)
 
     # 7. Composite summary
-    fig = plot_summary(result, balloon_mono, sr, onset=onset)
+    fig = plot_summary(result, balloon_mono, sr, onset=onset,
+                       energy_window_ms=energy_window_ms)
     p = str(out / f"summary.{fmt}")
     fig.savefig(p, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
