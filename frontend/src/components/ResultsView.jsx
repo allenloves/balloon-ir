@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from 'react'
 import AudioPlayer from './AudioPlayer'
 
+const API_BASE = import.meta.env.VITE_API_URL || ''
+
 const TABS = [
   { id: 'comparison', label: 'Comparison' },
   { id: 'analysis', label: 'Analysis' },
@@ -47,7 +49,7 @@ export default function ResultsView({ jobId, summary, previews }) {
         <h2 className="results__title">Results</h2>
         <a
           className="results__download"
-          href={`/api/result/${jobId}`}
+          href={`${API_BASE}/api/result/${jobId}`}
           download
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">

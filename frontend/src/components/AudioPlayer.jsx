@@ -5,6 +5,8 @@ import React, { useState, useRef, useCallback, useEffect } from 'react'
  * using Web Audio API's ConvolverNode.
  */
 
+const API_BASE = import.meta.env.VITE_API_URL || ''
+
 const DEMO_MESSAGE =
   'Upload a dry audio file to audition the synthesized IR via real-time convolution.'
 
@@ -33,7 +35,7 @@ export default function AudioPlayer({ jobId }) {
         const ctx = new (window.AudioContext || window.webkitAudioContext)()
         ctxRef.current = ctx
 
-        const res = await fetch(`/api/result/${jobId}`)
+        const res = await fetch(`${API_BASE}/api/result/${jobId}`)
         if (!res.ok) throw new Error('Failed to fetch IR')
 
         // The result endpoint returns a ZIP. We need to extract ir.wav.

@@ -4,6 +4,8 @@ import ParameterPanel from './components/ParameterPanel'
 import ProgressTracker from './components/ProgressTracker'
 import ResultsView from './components/ResultsView'
 
+const API_BASE = import.meta.env.VITE_API_URL || ''
+
 const DEFAULT_PARAMS = {
   onset_threshold_db: -40,
   ned_window_ms: 43,
@@ -37,7 +39,7 @@ export default function App() {
   const pollStatus = useCallback((id) => {
     const poll = async () => {
       try {
-        const res = await fetch(`/api/status/${id}`)
+        const res = await fetch(`${API_BASE}/api/status/${id}`)
         if (!res.ok) return
         const data = await res.json()
         setStatus(data)
@@ -48,7 +50,7 @@ export default function App() {
 
           // Fetch preview plots when done
           if (data.status === 'done') {
-            const prev = await fetch(`/api/preview/${id}`)
+            const prev = await fetch(`${API_BASE}/api/preview/${id}`)
             if (prev.ok) {
               const prevData = await prev.json()
               setPreviews(prevData.plots)
