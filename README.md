@@ -1,3 +1,12 @@
+---
+title: Balloon IR Synthesizer
+emoji: "\U0001F388"
+colorFrom: yellow
+colorTo: orange
+sdk: docker
+app_port: 7860
+---
+
 # Balloon IR Synthesizer
 
 Convert balloon pop recordings into clean, full-bandwidth room impulse responses.
@@ -38,13 +47,13 @@ Open http://localhost:3000
 ## Deployment
 
 - **Frontend**: GitHub Pages (auto-deploy on push via GitHub Actions)
-- **Backend**: Render (free tier)
+- **Backend**: Hugging Face Spaces (Docker, free tier — 16 GB RAM)
 
 ### Known Limitations
 
-- **Render free tier**: Server sleeps after 15 minutes of inactivity. First request after sleep takes 30-60 seconds for cold start. In-memory job store is lost on restart.
-- **Plot generation disabled on Render**: Matplotlib plot generation is too slow / memory-intensive for Render's free tier (512 MB RAM, shared CPU). Set `SKIP_PLOTS=1` to disable. Plots are still generated when running locally.
-- **For production use**: Consider a persistent job store (database + file storage) and a host with dedicated CPU/RAM for DSP processing.
+- **In-memory job store**: Jobs are lost on container restart. For production use, replace with a database + file storage backend.
+- **Cold starts**: HF Spaces may sleep after extended inactivity (~48h). Cold start involves rebuilding the Docker container (1-2 min).
+- **Render free tier (deprecated)**: Previously used Render, but 512 MB RAM was insufficient for the DSP pipeline. Kept `render.yaml` for reference.
 
 ## References
 

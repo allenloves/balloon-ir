@@ -27,7 +27,7 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS: allow frontend dev server + GitHub Pages + Render
+# CORS: allow frontend dev server + GitHub Pages
 _cors_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
