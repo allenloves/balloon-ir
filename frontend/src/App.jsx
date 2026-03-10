@@ -75,7 +75,7 @@ export default function App() {
     formData.append('params', JSON.stringify(params))
 
     try {
-      const res = await fetch('/api/process', { method: 'POST', body: formData })
+      const res = await fetch(`${API_BASE}/api/process`, { method: 'POST', body: formData })
       if (!res.ok) {
         const err = await res.json()
         setStatus({ status: 'error', progress: 0, message: '', error: err.detail || 'Upload failed' })
