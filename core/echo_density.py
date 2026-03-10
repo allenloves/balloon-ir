@@ -500,6 +500,7 @@ def detect_early_reflections_ned_guided(
     onset_sample: int,
     sr: int,
     ned_threshold: float = 0.3,
+    min_early_ms: float = 10.0,
     min_spacing_ms: float = 1.0,
     peak_threshold_db: float = -20.0,
     max_reflections: int = 50,
@@ -540,6 +541,15 @@ def detect_early_reflections_ned_guided(
         to fully diffuse, stop placing manual peaks and let the
         Poisson process take over. Typical rooms transition around
         30–80ms after onset.
+    min_early_ms : float
+        Minimum duration of the early region in ms, regardless of NED.
+        Default 10ms. This is a physics-based floor: sound travels
+        ~3.4 m in 10ms, so the earliest wall reflection in any room
+        cannot arrive before the sound has made a round trip to the
+        nearest surface. Even in very reverberant spaces where NED
+        rises quickly, the first ~10ms after the direct path are
+        physically guaranteed to contain only a few discrete arrivals.
+        Set to 0 to disable (pure NED-guided).
     min_spacing_ms : float
         Minimum spacing between detected reflections in ms.
         Reduced from default 2.0 to 1.0 to catch closely spaced
@@ -574,6 +584,18 @@ def detect_early_reflections_ned_guided(
         # NED never reaches threshold — use entire signal as "early"
         # (very dry room or very short recording)
         transition_sample = len(integrated)
+
+    # --- Enforce minimum early region duration ---
+    # Physics-based floor: the earliest possible wall reflection requires
+    # a round trip to the nearest surface. Even in very dense/reverberant
+    # spaces, the NED estimation window (43ms) can cause the NED to appear
+    # high at onset because it averages in energy from later dense arrivals.
+    # The min_early_ms floor prevents the transition from occurring before
+    # the first few physical reflections have had time to arrive.
+    min_early_samples = int(sr * min_early_ms / 1000.0)
+    min_transition = onset_sample + min_early_samples
+    if transition_sample < min_transition:
+        transition_sample = min_transition
 
     transition_time_ms = (transition_sample - onset_sample) / sr * 1000.0
 
@@ -765,6 +787,7 @@ def analyze_and_synthesize_density(
     balloon_diameter_cm: Optional[float] = None,
     num_early_reflections: int = 2,
     ned_transition_threshold: Optional[float] = 0.3,
+    min_early_ms: float = 10.0,
     num_sequences: int = 1,
     random_seed: Optional[int] = None,
 ) -> dict:
@@ -795,6 +818,13 @@ def analyze_and_synthesize_density(
         only begins after the transition point. This preserves the
         perceptually important "bounce" character of early reflections.
         Set to None to use legacy fixed-count detection.
+    min_early_ms : float
+        Minimum early region duration in ms, regardless of NED.
+        Default 10ms. Physics-based floor: sound travels ~3.4m in
+        10ms, so the earliest wall reflection cannot arrive before
+        this. Prevents the NED estimation window from causing a
+        premature transition in dense/reverberant spaces.
+        Set to 0 to disable.
     num_sequences : int
         Number of independent echo sequences to generate.
         Use 2 for stereo processing (Stage 2).
@@ -853,6 +883,7 @@ def analyze_and_synthesize_density(
         early_refs, transition_sample = detect_early_reflections_ned_guided(
             integrated, ned_fullband, onset_sample, sr,
             ned_threshold=ned_transition_threshold,
+            min_early_ms=min_early_ms,
         )
         transition_time_ms = (transition_sample - onset_sample) / sr * 1000.0
     else:

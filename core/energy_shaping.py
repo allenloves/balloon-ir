@@ -122,6 +122,8 @@ def extrapolate_energy(
     sr: int,
     noise_floor_db: float = -40.0,
     fit_range_db: float = 10.0,
+    max_extrap_factor: float = 2.0,
+    min_slope_db_per_s: float = -3.0,
 ) -> np.ndarray:
     """
     Extrapolate a band energy curve below its noise floor.
@@ -129,11 +131,18 @@ def extrapolate_energy(
     ENGINEERING DECISION: The paper (§5.2) cites Bryan & Abel [13]
     for energy extrapolation below the noise floor, but does not
     detail the algorithm. We use a simplified approach: fit a linear
-    regression (in dB) to the energy curve in a region above the
-    estimated noise floor, then extend that line.
+    regression (in dB) to a time window just above the noise floor
+    onset, then extend that line with safety limits.
 
-    This produces a more natural decay tail instead of the energy
-    hitting a flat noise floor (compare Fig. 13 upper vs. lower panels).
+    Robustness measures (for non-standard spaces like semi-open areas,
+    flutter echo environments, etc.):
+      - Fit region is a contiguous time window ending at floor_onset,
+        not scattered samples across the full signal. This prevents
+        non-monotonic energy fluctuations from flattening the fit.
+      - Maximum extrapolation length is capped at max_extrap_factor
+        times the above-floor signal duration.
+      - Minimum decay rate enforced: if the fitted slope is shallower
+        than min_slope_db_per_s, extrapolation is skipped.
 
     Parameters
     ----------
@@ -147,8 +156,18 @@ def extrapolate_energy(
     fit_range_db : float
         Width of the region (in dB) above the noise floor used for
         fitting the linear decay slope. Default 10 dB.
-        The fit region is [noise_floor_db, noise_floor_db + fit_range_db]
-        relative to peak, e.g., [-40, -30] dB.
+        The fit window spans from the time where energy was at
+        (floor + fit_range_db) down to floor_onset.
+    max_extrap_factor : float
+        Maximum extrapolation length as a multiple of the above-floor
+        duration. Default 2.0 (extrapolation can at most double the
+        effective signal length). Prevents unreasonably long tails
+        from shallow decay slopes.
+    min_slope_db_per_s : float
+        Minimum decay rate in dB/second (must be negative). If the
+        fitted slope is shallower than this, extrapolation is skipped.
+        Default -3.0 dB/s. A slope shallower than this likely indicates
+        a poor fit (e.g., fitting to noise or non-monotonic energy).
 
     Returns
     -------
@@ -185,11 +204,26 @@ def extrapolate_energy(
 
     floor_onset = below_floor[0]
 
-    # Fit region: from (floor - fit_range_db) to floor_threshold_db
+    # --- Fit region: contiguous window BEFORE floor_onset ---
+    # Find the time where energy was at (floor + fit_range_db).
+    # The fit window spans from that point to floor_onset — a contiguous
+    # stretch of the decay curve just above the noise floor.
+    # This avoids selecting scattered samples from non-monotonic energy
+    # profiles (e.g., flutter echoes, semi-open spaces).
     fit_upper_db = floor_threshold_db + fit_range_db
-    fit_region = np.where(
-        (energy_db >= floor_threshold_db) & (energy_db <= fit_upper_db)
-    )[0]
+    fit_start = None
+    for i in range(floor_onset - 1, -1, -1):
+        if energy_db[i] >= fit_upper_db:
+            fit_start = i
+            break
+
+    if fit_start is None:
+        # Energy never reached fit_upper_db — try fitting from the
+        # beginning up to floor_onset
+        fit_start = 0
+
+    # Ensure we have enough points for a reliable fit
+    fit_region = np.arange(fit_start, floor_onset)
 
     if len(fit_region) < 10:
         # Not enough points for a reliable fit — skip extrapolation
@@ -198,15 +232,27 @@ def extrapolate_energy(
     # Linear regression in dB domain: energy_db ≈ slope * t + intercept
     t_fit = fit_region.astype(np.float64)
     db_fit = energy_db[fit_region]
-    # Use numpy polyfit (degree 1 = linear)
     slope, intercept = np.polyfit(t_fit, db_fit, 1)
 
     if slope >= 0:
         # Energy is not decaying in the fit region — skip
         return energy_ext
 
-    # Extrapolate: replace everything from floor_onset onward
-    t_extrap = np.arange(floor_onset, len(energy), dtype=np.float64)
+    # --- Safety: minimum decay rate ---
+    # Convert slope from dB/sample to dB/second for comparison
+    slope_db_per_s = slope * sr
+    if slope_db_per_s > min_slope_db_per_s:
+        # Decay is too shallow — likely a poor fit. Skip extrapolation.
+        return energy_ext
+
+    # --- Safety: maximum extrapolation length ---
+    # Cap at max_extrap_factor × above-floor duration
+    above_floor_duration = floor_onset  # samples from start to floor
+    max_extrap_samples = int(above_floor_duration * max_extrap_factor)
+    extrap_end = min(len(energy), floor_onset + max_extrap_samples)
+
+    # Extrapolate from floor_onset to extrap_end
+    t_extrap = np.arange(floor_onset, extrap_end, dtype=np.float64)
     extrap_db = slope * t_extrap + intercept
 
     # Convert back to linear energy
@@ -214,8 +260,8 @@ def extrapolate_energy(
 
     # Only replace where the extrapolated value is below the original
     # (don't boost energy that's already above the extrapolated line)
-    for i, t in enumerate(range(floor_onset, len(energy))):
-        energy_ext[t] = min(energy_ext[t], extrap_linear[i])
+    for i, t_idx in enumerate(range(floor_onset, extrap_end)):
+        energy_ext[t_idx] = min(energy_ext[t_idx], extrap_linear[i])
 
     return energy_ext
 
