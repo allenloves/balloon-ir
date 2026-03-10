@@ -100,7 +100,15 @@ export default function App() {
           Balloon <em>IR</em> Synthesizer
         </h1>
         <p className="header__subtitle">
-          Balloon pop → Room impulse response &middot; Abel et al. 2010
+          Balloon pop &rarr; Room impulse response by Allen SC Wu, based on{' '}
+          <a
+            href="https://www.researchgate.net/profile/Bissera-Pentcheva/publication/277732009_Estimating_Room_Impulse_Responses_from_Recorded_Balloon_Pops/links/563a4b4408ae45b5d284a8ce/Estimating-Room-Impulse-Responses-from-Recorded-Balloon-Pops.pdf"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: 'var(--text-muted)', textDecoration: 'underline' }}
+          >
+            Abel et al. 2010
+          </a>
         </p>
       </header>
 
