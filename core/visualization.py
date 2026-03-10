@@ -244,8 +244,9 @@ def plot_spectrogram_comparison(
     im1.set_clim(vmin, vmax)
     im2.set_clim(vmin, vmax)
 
-    fig.colorbar(im2, ax=[ax1, ax2], label="Power (dB)", shrink=0.8)
     fig.subplots_adjust(left=0.08, right=0.88, wspace=0.25)
+    cbar_ax = fig.add_axes([0.90, 0.15, 0.02, 0.7])
+    fig.colorbar(im2, cax=cbar_ax, label="Power (dB)")
     return fig
 
 
