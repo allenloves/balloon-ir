@@ -135,18 +135,22 @@ def _process_job(job_id: str):
             progress_callback=progress_callback,
         )
 
-        # Generate plots
-        progress_callback(92, "Generating plots...")
-        balloon_mono = result["preprocessing"]["balloon_mono"]
-        onset = result["preprocessing"]["onset_sample"]
-        sr = result["sr"]
+        # Generate plots (skip if SKIP_PLOTS env var is set, e.g. on free-tier hosts)
+        import os
+        if not os.environ.get("SKIP_PLOTS"):
+            progress_callback(92, "Generating plots...")
+            balloon_mono = result["preprocessing"]["balloon_mono"]
+            onset = result["preprocessing"]["onset_sample"]
+            sr = result["sr"]
 
-        plots_dir = str(Path(job.output_dir) / "plots")
-        save_all_plots(
-            result, balloon_mono, sr, plots_dir,
-            onset=onset,
-            energy_window_ms=params.get("energy_window_ms", 10.0),
-        )
+            plots_dir = str(Path(job.output_dir) / "plots")
+            save_all_plots(
+                result, balloon_mono, sr, plots_dir,
+                onset=onset,
+                energy_window_ms=params.get("energy_window_ms", 10.0),
+            )
+        else:
+            progress_callback(92, "Skipping plots (server mode)...")
 
         with _lock:
             job.result = result
