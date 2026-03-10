@@ -229,6 +229,10 @@ def compute_gain(
     echo_energy: np.ndarray,
     smoothing_samples: int = 0,
     epsilon: float = 1e-10,
+    transition_sample: Optional[int] = None,
+    echo_band_raw: Optional[np.ndarray] = None,
+    sr: int = 44100,
+    pulse_halo_ms: float = 2.0,
 ) -> np.ndarray:
     """
     Compute the per-band gain function γ_k(t).
@@ -240,6 +244,13 @@ def compute_gain(
     from Eq. 12-13):
         γ_k(t) = sqrt(balloon_energy_k(t)) / sqrt(echo_energy_k(t))
                = sqrt(balloon_energy_k(t) / echo_energy_k(t))
+
+    When transition_sample is provided, the early region (before
+    transition) uses a sparse-aware gain strategy: γ_k is only applied
+    in a small halo around actual pulse positions. Between pulses, γ_k
+    is forced to 0, preserving the discrete bounce character of the
+    early reflections. This prevents the 10ms energy smoothing window
+    from "filling in" the silent gaps between early reflections.
 
     Parameters
     ----------
@@ -253,6 +264,22 @@ def compute_gain(
     epsilon : float
         Small value to prevent division by zero. Where echo energy is
         below epsilon, γ is set to 0.
+    transition_sample : int or None
+        Sample index of the NED-guided sparse→dense transition.
+        If provided, the early region [0, transition_sample) uses
+        sparse-aware gain masking. If None, standard γ_k everywhere.
+    echo_band_raw : np.ndarray or None
+        The raw (pre-energy-estimation) band-filtered echo sequence
+        p_k(t). Required when transition_sample is set, used to find
+        actual pulse positions in the early region.
+    sr : int
+        Sample rate in Hz. Used to compute pulse_halo in samples.
+    pulse_halo_ms : float
+        Half-width of the gain halo around each pulse in ms.
+        Within this halo, γ_k is applied normally. Outside, γ_k = 0.
+        Default 2.0ms — wide enough to preserve the pulse's band-
+        filtered waveform shape (which extends beyond 1 sample due
+        to the filterbank's impulse response).
 
     Returns
     -------
@@ -267,6 +294,35 @@ def compute_gain(
     # Zero out gain where echo energy is negligible
     gamma[echo_energy < epsilon] = 0.0
 
+    # --- Sparse-aware early region masking ---
+    # In the early region, the echo sequence has only a few discrete
+    # pulses (placed by detect_early_reflections_ned_guided). Without
+    # masking, the 10ms energy smoothing spreads each pulse's energy
+    # into a broad halo, and γ_k "fills in" the silent gaps between
+    # pulses by amplifying filterbank leakage. The mask restricts γ_k
+    # to a small neighborhood around actual pulses, keeping the gaps
+    # silent and preserving the perceptual bounce character.
+    if transition_sample is not None and echo_band_raw is not None:
+        halo_samples = int(sr * pulse_halo_ms / 1000.0)
+        early_end = min(transition_sample, len(gamma))
+
+        # Find pulse positions: where the raw echo band has significant energy
+        # Use a threshold relative to the early region's peak
+        early_raw = np.abs(echo_band_raw[:early_end])
+        if len(early_raw) > 0 and np.max(early_raw) > 0:
+            pulse_threshold = np.max(early_raw) * 0.01  # -40dB re peak
+            pulse_positions = np.where(early_raw > pulse_threshold)[0]
+
+            # Build mask: 1 near pulses, 0 elsewhere
+            mask = np.zeros(early_end)
+            for pos in pulse_positions:
+                lo = max(0, pos - halo_samples)
+                hi = min(early_end, pos + halo_samples + 1)
+                mask[lo:hi] = 1.0
+
+            # Apply mask to early region
+            gamma[:early_end] *= mask
+
     # Optional smoothing to prevent rapid gain fluctuations
     if smoothing_samples > 1:
         kernel = np.ones(smoothing_samples) / smoothing_samples
@@ -280,6 +336,9 @@ def imprint_energy(
     balloon_energies: list[np.ndarray],
     echo_energies: list[np.ndarray],
     smoothing_samples: int = 0,
+    transition_sample: Optional[int] = None,
+    sr: int = 44100,
+    pulse_halo_ms: float = 2.0,
 ) -> list[np.ndarray]:
     """
     Apply the balloon's energy envelope to all bands of the echo sequence.
@@ -297,6 +356,13 @@ def imprint_energy(
         Smoothed energy profiles ν²_k(t) of the echo bands.
     smoothing_samples : int
         Gain smoothing window length in samples.
+    transition_sample : int or None
+        NED-guided transition point. If set, early region uses
+        sparse-aware gain masking.
+    sr : int
+        Sample rate in Hz.
+    pulse_halo_ms : float
+        Half-width of gain halo around pulses in early region (ms).
 
     Returns
     -------
@@ -307,7 +373,13 @@ def imprint_energy(
     for p_k, beta_sq_k, nu_sq_k in zip(
         echo_bands, balloon_energies, echo_energies
     ):
-        gamma_k = compute_gain(beta_sq_k, nu_sq_k, smoothing_samples)
+        gamma_k = compute_gain(
+            beta_sq_k, nu_sq_k, smoothing_samples,
+            transition_sample=transition_sample,
+            echo_band_raw=p_k,
+            sr=sr,
+            pulse_halo_ms=pulse_halo_ms,
+        )
         shaped.append(p_k * gamma_k)
     return shaped
 
@@ -441,6 +513,8 @@ def shape_energy(
     gain_smoothing_ms: float = 0.0,
     f_min: float = 50.0,
     f_max: Optional[float] = None,
+    transition_sample: Optional[int] = None,
+    pulse_halo_ms: float = 2.0,
 ) -> np.ndarray:
     """
     Complete Stage 3 pipeline: shape the echo sequence's spectral energy
@@ -468,6 +542,15 @@ def shape_energy(
         Lowest filter bank center frequency in Hz.
     f_max : float or None
         Highest filter bank center frequency in Hz.
+    transition_sample : int or None
+        NED-guided sparse→dense transition point from Stage 1.
+        If provided, the early region [0, transition_sample) uses
+        sparse-aware gain masking: γ_k is only applied near actual
+        pulse positions, preserving silence between early reflections.
+        If None, standard γ_k applied everywhere (legacy behavior).
+    pulse_halo_ms : float
+        Half-width of the gain halo around each pulse in the early
+        region, in ms. Default 2.0ms.
 
     Returns
     -------
@@ -501,7 +584,10 @@ def shape_energy(
 
     # --- 3d. Energy imprinting ---
     shaped_bands = imprint_energy(
-        echo_bands, balloon_energies, echo_energies, smoothing_samples
+        echo_bands, balloon_energies, echo_energies, smoothing_samples,
+        transition_sample=transition_sample,
+        sr=sr,
+        pulse_halo_ms=pulse_halo_ms,
     )
 
     # --- 3e. Direct path equalization & summation ---

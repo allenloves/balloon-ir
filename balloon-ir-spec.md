@@ -120,11 +120,11 @@ This gives the number of full-bandwidth echoes per second. Note: the spec previo
 Generate a sequence of Dirac-like pulses with Poisson-distributed inter-arrival times following e(t):
 
 ```python
-def synthesize_echo_sequence(aed_profile, sr, duration):
+def synthesize_echo_sequence(aed_profile, sr, duration, transition_sample=None):
     """
     Generate pulse sequence with time-varying Poisson density.
     
-    For each time step:
+    For each time step (starting from transition_sample):
         expected_interval = sr / e(t)  # samples between pulses
         actual_interval = exponential_random(expected_interval)
         place a pulse at current_time + actual_interval
@@ -134,11 +134,27 @@ def synthesize_echo_sequence(aed_profile, sr, duration):
     """
 ```
 
-**Manual placement of early reflections**:
-- The first few clear arrivals (direct path, floor reflection) should be placed manually rather than generated randomly
-- Detect these from the integrated balloon response (find the first 2–4 peaks above a threshold)
-- Place corresponding pulses at those times in the synthetic sequence
-- Use the NED-based synthesis only for the remaining (later) portion
+**NED-guided early reflection detection (Method C)**:
+
+The sparse→dense phase transition in a room's impulse response is perceptually critical: early discrete reflections ("bounces" off walls) must remain clearly separated from the diffuse late field. Rather than placing a fixed number (2–4) of early reflections and immediately starting Poisson synthesis, we use the NED profile itself to determine where the transition occurs:
+
+1. **Find transition point**: Scan η_h(t) from onset forward; the first sample where η_h ≥ `ned_transition_threshold` (default 0.3) marks the boundary between the sparse early field and the statistically dense late field.
+2. **Detect ALL discrete peaks before transition**: In the region [onset, transition), find all peaks in the integrated balloon response that exceed `peak_threshold_db` (default −20 dB re: strongest peak), with `min_spacing_ms` = 1.0 ms minimum separation. This may yield 4–20+ reflections depending on room geometry.
+3. **Place detected peaks manually**: These peaks are inserted directly into the echo sequence at their measured positions and amplitudes. **No Poisson noise is added before the transition point** — the sparse region contains ONLY the detected discrete reflections.
+4. **Start Poisson synthesis at transition**: From `transition_sample` onward, the standard Poisson process generates pulses according to the AED profile.
+
+```python
+def detect_early_reflections_ned_guided(
+    integrated, ned_fullband, onset_sample, sr,
+    ned_threshold=0.3, min_spacing_ms=1.0,
+    peak_threshold_db=-20.0, max_reflections=50
+) -> (list[dict], int):
+    """Returns (reflections, transition_sample)."""
+```
+
+**Rationale**: The original fixed-count approach (num_early_reflections=2) started Poisson synthesis immediately after the floor reflection (~8ms), filling the 10–80ms region with statistically uniform noise. This destroyed the perceptually important "bounce" character — isolated discrete echoes arriving from walls and ceiling with silence between them. The NED-guided approach preserves this structure by letting the measured echo density profile decide when the field is dense enough for statistical synthesis.
+
+**Legacy fallback**: Setting `ned_transition_threshold=None` reverts to the original fixed-count detection with `num_early_reflections` (default 2). This maintains backward compatibility.
 
 **Output**: `echo_sequence: np.ndarray` — synthetic pulse train, same length and sr as input. For stereo processing (Stage 2), generate TWO independent sequences using different random seeds.
 
@@ -269,7 +285,8 @@ def extrapolate_energy(band_energy_db, noise_floor_db=-40):
 Apply the balloon's energy envelope to the synthetic echo sequence — Equation (14):
 
 ```python
-def imprint_energy(echo_bands, balloon_energy_sq, echo_energy_sq):
+def imprint_energy(echo_bands, balloon_energy_sq, echo_energy_sq,
+                   transition_sample=None, sr=44100, pulse_halo_ms=2.0):
     """
     For each band k — Equation (14):
         γ_k(t) = β_k(t) / ν_k(t)
@@ -289,6 +306,31 @@ def imprint_energy(echo_bands, balloon_energy_sq, echo_energy_sq):
     to avoid rapid gain fluctuations (see Known Gaps #6).
     """
 ```
+
+**Sparse-aware gain masking in early region**:
+
+When `transition_sample` is provided (from Stage 1's NED-guided detection), γ_k(t) in the early region [0, transition_sample) uses a pulse halo mask:
+
+1. **Problem**: The 10ms Hanning smoothing window (Step 3b) spreads each pulse's energy into a broad halo. In the sparse early region, this causes γ_k = β_k/ν_k to "fill in" the silent gaps between pulses by amplifying residual filterbank leakage. The perceptual result: bounce character is destroyed, replaced by a smooth diffuse wash.
+
+2. **Solution**: For each band k in the early region, find the actual pulse positions in the raw echo band p_k(t) (threshold: peak × 0.01 = −40 dB). Build a binary mask that is 1 within ±`pulse_halo_ms` (default 2.0 ms) of each pulse, and 0 elsewhere. Multiply γ_k by this mask before applying to p_k. This preserves the correct energy scaling at each pulse while forcing silence between them.
+
+3. **After transition**: Standard γ_k applied everywhere (no masking), since the Poisson process has sufficient density for the smoothed energy ratio to work correctly.
+
+```python
+def compute_gain(balloon_energy, echo_energy, transition_sample=None,
+                 echo_band_raw=None, sr=44100, pulse_halo_ms=2.0):
+    """
+    γ_k(t) = sqrt(balloon_energy / echo_energy)
+    
+    If transition_sample is set:
+        - Find pulse positions in echo_band_raw[:transition_sample]
+        - Build halo mask (1 near pulses, 0 elsewhere)
+        - gamma[:transition_sample] *= mask
+    """
+```
+
+**Known limitation**: The pulse halo mask is a pragmatic patch, not a fundamental solution. The 2ms halo may not fully cover filterbank ringing from higher-order Butterworth filters, and the hard mask boundary can introduce subtle discontinuities. A more principled approach would be to directly splice the balloon's band-filtered early waveforms into the synthesized IR (see Future Work).
 
 #### 3e. Direct Path Equalization & Final Summation
 
@@ -367,7 +409,9 @@ Expose these to the user via the web UI:
 | `energy_window_ms` | 10 | 5–50 | Band energy smoothing window (ms) |
 | `extrapolate` | true | bool | Whether to extrapolate energy below noise floor |
 | `noise_floor_db` | -40 | -60 to -20 | Noise floor threshold for extrapolation |
-| `num_early_reflections` | 2 | 0–10 | Number of early reflections to place manually |
+| `num_early_reflections` | 2 | 0–10 | Number of early reflections to place manually (legacy mode only; ignored when `ned_transition_threshold` is set) |
+| `ned_transition_threshold` | 0.3 | 0.05–0.8 or None | NED value for sparse→dense phase transition (Method C). Set to None for legacy fixed-count mode. Lower values = longer manual region, more bounce preservation |
+| `pulse_halo_ms` | 2.0 | 0.5–10 | Half-width of gain halo around early pulses in energy shaping (ms). Controls how much of each early reflection's filterbank ringing is preserved |
 | `output_sr` | (same as input) | 44100/48000/96000 | Output sample rate |
 | `output_bit_depth` | 24 | 16/24/32float | Output bit depth |
 | `output_length_s` | auto | 0.5–30 | Output IR length in seconds |
@@ -463,6 +507,7 @@ async def process_balloon(wav_bytes, params):
     - Cross-correlation profile (if stereo)
     - Band energy decay curves
     - Detected balloon diameter and early reflection times
+    - NED transition point (sparse→dense boundary) with time in ms
 
 - **Tab 3: Audition**
     - Built-in dry audio samples (speech, clap, music snippet)
@@ -949,7 +994,7 @@ These are aspects the paper doesn't fully specify. Make reasonable engineering c
 
 1. **Energy extrapolation method**: The paper cites Bryan & Abel [13] but doesn't detail the algorithm. A simple approach: fit a linear regression to the dB energy curve in a region 10–20dB above the noise floor, then extend that line.
 
-2. **Early reflection detection**: The paper says "the first few clear arrivals may be placed by hand." Automate this: detect peaks in the integrated balloon response that exceed a threshold (e.g., 6dB above the local NED-predicted level).
+2. **Early reflection detection**: The paper says "the first few clear arrivals may be placed by hand." We automate this with NED-guided detection (Method C): use the NED profile to find the sparse→dense transition point, detect ALL peaks in the sparse region, and only start Poisson synthesis after the transition. The current implementation also includes sparse-aware gain masking in Stage 3 (pulse halo mask) to prevent γ_k from filling in silent gaps between early reflections. See §1f and §3d for details.
 
 3. **Balloon diameter auto-detection**: Measure the zero-crossing interval of the direct-path N-wave. This requires clean isolation of the direct path, which may need a short analysis window.
 
@@ -969,7 +1014,17 @@ These are aspects the paper doesn't fully specify. Make reasonable engineering c
 
 ---
 
-## 12. Test Data Sources
+## 12. Future Work: Early Reflection Splicing
+
+The current approach (NED-guided detection + pulse halo masking) is a pragmatic solution that partially preserves early reflection "bounce" character. A more fundamental approach would bypass Stage 3 entirely for the early region:
+
+**Direct waveform splicing**: For each detected early reflection in [onset, transition_sample), extract the corresponding band-filtered waveform directly from the balloon recording and splice it into the synthesized IR at the same time position. Apply a short crossfade (1–5ms) at the transition point to smoothly join the spliced early region with the γ_k-shaped late region.
+
+This avoids all issues with γ_k in the sparse regime (smoothing window mismatch, filterbank ringing, halo mask artifacts) by using the actual recorded waveforms instead of statistically synthesized approximations. The tradeoff is that the early region would not be "room-independent" — it would carry the specific reflection pattern of the recorded space rather than a statistical equivalent. For most applications this is desirable, since the early reflections are the most perceptually salient part of the IR.
+
+---
+
+## 13. Test Data Sources
 
 - **OpenAIR** (openairlib.net): Free impulse response library; some entries include balloon pop recordings alongside swept-sine measurements — perfect for validation
 - **Record your own**: Pop a balloon in a reverberant space while recording with a handheld recorder; this is the paper's intended use case

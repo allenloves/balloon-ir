@@ -494,11 +494,139 @@ def detect_early_reflections(
     return reflections
 
 
+def detect_early_reflections_ned_guided(
+    integrated: np.ndarray,
+    ned_fullband: np.ndarray,
+    onset_sample: int,
+    sr: int,
+    ned_threshold: float = 0.3,
+    min_spacing_ms: float = 1.0,
+    peak_threshold_db: float = -20.0,
+    max_reflections: int = 50,
+) -> tuple[list[dict], int]:
+    """
+    Detect early reflections using the NED profile as a phase-transition
+    boundary. Instead of detecting a fixed number of peaks, this function
+    finds ALL discrete reflections in the sparse early region (where
+    NED < ned_threshold), then hands off to Poisson synthesis once the
+    field becomes statistically diffuse.
+
+    This preserves the perceptually important "bounce" character of the
+    early field — discrete, clearly separated wall reflections that are
+    audible as distinct echoes before the late reverb tail takes over.
+
+    ENGINEERING DECISION: The original detect_early_reflections() with
+    num_reflections=2 only placed the direct path and floor reflection,
+    then immediately started Poisson synthesis. This caused the sparse
+    early region (typically 30–80ms) to be filled with statistically
+    uniform noise, destroying the discrete bounce character. The NED-
+    guided approach lets the measured echo density profile itself decide
+    where the transition should occur.
+
+    Parameters
+    ----------
+    integrated : np.ndarray
+        Integrated balloon recording (from Step 1a).
+    ned_fullband : np.ndarray
+        Full-bandwidth NED profile η_h(t) (from Steps 1c-1d).
+        Used to determine the sparse→dense transition point.
+    onset_sample : int
+        Onset position in the integrated signal.
+    sr : int
+        Sample rate in Hz.
+    ned_threshold : float
+        NED value at which we consider the field "dense enough" for
+        Poisson synthesis. Default 0.3 means: once 30% of the way
+        to fully diffuse, stop placing manual peaks and let the
+        Poisson process take over. Typical rooms transition around
+        30–80ms after onset.
+    min_spacing_ms : float
+        Minimum spacing between detected reflections in ms.
+        Reduced from default 2.0 to 1.0 to catch closely spaced
+        early reflections (e.g. flutter echoes between parallel walls).
+    peak_threshold_db : float
+        Detection threshold in dB relative to the strongest peak in
+        the search region. Lowered from default -12 to -20 to catch
+        weaker early reflections that still contribute to bounce.
+    max_reflections : int
+        Safety cap on number of detected reflections.
+
+    Returns
+    -------
+    reflections : list of dict
+        Each dict has:
+        - 'sample': int — sample index of the reflection
+        - 'amplitude': float — amplitude of the reflection
+        - 'time_ms': float — time in ms relative to onset
+    transition_sample : int
+        Sample index where NED first exceeds ned_threshold.
+        Poisson synthesis should start from this point.
+    """
+    # --- Find the transition point from NED profile ---
+    # Search only from onset onwards
+    ned_from_onset = ned_fullband[onset_sample:]
+    transition_indices = np.where(ned_from_onset >= ned_threshold)[0]
+
+    if len(transition_indices) > 0:
+        # Transition point relative to full signal
+        transition_sample = onset_sample + transition_indices[0]
+    else:
+        # NED never reaches threshold — use entire signal as "early"
+        # (very dry room or very short recording)
+        transition_sample = len(integrated)
+
+    transition_time_ms = (transition_sample - onset_sample) / sr * 1000.0
+
+    # --- Detect peaks in the sparse region [onset, transition) ---
+    search_end = min(transition_sample, len(integrated))
+    segment = np.abs(integrated[onset_sample:search_end])
+
+    if len(segment) == 0:
+        return [], transition_sample
+
+    peak_val = np.max(segment)
+    if peak_val == 0:
+        return [], transition_sample
+
+    min_spacing_samples = int(sr * min_spacing_ms / 1000.0)
+    threshold_linear = peak_val * 10.0 ** (peak_threshold_db / 20.0)
+
+    reflections = []
+    used_mask = np.zeros(len(segment), dtype=bool)
+
+    for _ in range(max_reflections):
+        masked = segment.copy()
+        masked[used_mask] = 0.0
+
+        if np.max(masked) < threshold_linear:
+            break
+
+        peak_idx = np.argmax(masked)
+        amp = segment[peak_idx]
+
+        reflections.append({
+            "sample": onset_sample + peak_idx,
+            "amplitude": amp,
+            "time_ms": peak_idx / sr * 1000.0,
+        })
+
+        # Mask out region around this peak
+        mask_lo = max(0, peak_idx - min_spacing_samples)
+        mask_hi = min(len(segment), peak_idx + min_spacing_samples + 1)
+        used_mask[mask_lo:mask_hi] = True
+
+    # Sort by time
+    reflections.sort(key=lambda r: r["sample"])
+
+    return reflections, transition_sample
+
+
 def synthesize_echo_sequence(
     aed_profile: np.ndarray,
     sr: int,
     duration_samples: int,
     early_reflections: Optional[list[dict]] = None,
+    transition_sample: Optional[int] = None,
     rng: Optional[np.random.Generator] = None,
 ) -> np.ndarray:
     """
@@ -527,6 +655,16 @@ def synthesize_echo_sequence(
     early_reflections : list of dict or None
         Early reflections to place manually. Each dict must have
         'sample' (int) and 'amplitude' (float) keys.
+    transition_sample : int or None
+        Sample index where Poisson synthesis should begin. If provided,
+        this overrides the default behavior of starting immediately
+        after the last early reflection. This is the NED-guided
+        transition point from detect_early_reflections_ned_guided().
+        Before this point, ONLY manually placed early reflections
+        appear in the output (preserving the sparse, discrete bounce
+        character of the early field).
+        If None, falls back to original behavior: start Poisson
+        synthesis right after the last early reflection.
     rng : np.random.Generator or None
         Random number generator for reproducibility.
         If None, a new default generator is created.
@@ -547,13 +685,22 @@ def synthesize_echo_sequence(
     # Paper §3.2: "pulses representing the first few clear arrivals
     # (typically the direct path and floor reflection) may be placed
     # by hand."
+    #
+    # With NED-guided detection (method C), early_reflections may
+    # contain all discrete peaks in the sparse region, not just 2.
     synthesis_start = 0
     if early_reflections:
         for ref in early_reflections:
             idx = ref["sample"]
             if 0 <= idx < duration_samples:
                 echo_seq[idx] = ref["amplitude"]
-        # Start Poisson synthesis after the last early reflection
+
+    # --- Determine Poisson synthesis start point ---
+    if transition_sample is not None:
+        # NED-guided: start Poisson at the measured transition point
+        synthesis_start = transition_sample
+    elif early_reflections:
+        # Legacy behavior: start right after last early reflection
         synthesis_start = max(r["sample"] for r in early_reflections) + 1
 
     # --- Poisson process synthesis ---
@@ -617,6 +764,7 @@ def analyze_and_synthesize_density(
     ned_window_ms: float = 43.0,
     balloon_diameter_cm: Optional[float] = None,
     num_early_reflections: int = 2,
+    ned_transition_threshold: Optional[float] = 0.3,
     num_sequences: int = 1,
     random_seed: Optional[int] = None,
 ) -> dict:
@@ -638,6 +786,15 @@ def analyze_and_synthesize_density(
         Balloon diameter in cm. If None, auto-detect from direct path.
     num_early_reflections : int
         Number of early reflections to detect and place manually.
+        Only used when ned_transition_threshold is None (legacy mode).
+    ned_transition_threshold : float or None
+        NED value for sparse→dense phase transition (Method C).
+        When set (default 0.3), uses NED-guided early reflection
+        detection: ALL discrete peaks in the sparse region (where
+        η_h < threshold) are placed manually, and Poisson synthesis
+        only begins after the transition point. This preserves the
+        perceptually important "bounce" character of early reflections.
+        Set to None to use legacy fixed-count detection.
     num_sequences : int
         Number of independent echo sequences to generate.
         Use 2 for stereo processing (Stage 2).
@@ -647,14 +804,16 @@ def analyze_and_synthesize_density(
     Returns
     -------
     result : dict
-        'integrated'        : np.ndarray — integrated balloon recording
-        'ned_balloon'       : np.ndarray — balloon NED η_b(t)
-        'ned_fullband'      : np.ndarray — full-bandwidth NED η_h(t)
-        'aed'               : np.ndarray — absolute echo density e(t)
-        'nwave_duration_s'  : float — estimated N-wave duration
-        'balloon_radius_m'  : float — estimated balloon radius
-        'early_reflections' : list[dict] — detected early reflections
-        'echo_sequences'    : list[np.ndarray] — synthesized pulse sequences
+        'integrated'           : np.ndarray — integrated balloon recording
+        'ned_balloon'          : np.ndarray — balloon NED η_b(t)
+        'ned_fullband'         : np.ndarray — full-bandwidth NED η_h(t)
+        'aed'                  : np.ndarray — absolute echo density e(t)
+        'nwave_duration_s'     : float — estimated N-wave duration
+        'balloon_radius_m'     : float — estimated balloon radius
+        'early_reflections'    : list[dict] — detected early reflections
+        'transition_sample'    : int or None — NED transition point
+        'transition_time_ms'   : float or None — transition time in ms
+        'echo_sequences'       : list[np.ndarray] — synthesized pulse sequences
     """
     # --- 1a. Integration ---
     integrated = integrate_balloon(balloon_mono)
@@ -688,10 +847,21 @@ def analyze_and_synthesize_density(
     aed = compute_aed(ned_fullband, sr)
 
     # --- Detect early reflections ---
-    early_refs = detect_early_reflections(
-        integrated, onset_sample, sr,
-        num_reflections=num_early_reflections,
-    )
+    transition_sample = None
+    if ned_transition_threshold is not None:
+        # Method C: NED-guided phase transition
+        early_refs, transition_sample = detect_early_reflections_ned_guided(
+            integrated, ned_fullband, onset_sample, sr,
+            ned_threshold=ned_transition_threshold,
+        )
+        transition_time_ms = (transition_sample - onset_sample) / sr * 1000.0
+    else:
+        # Legacy: fixed-count detection
+        early_refs = detect_early_reflections(
+            integrated, onset_sample, sr,
+            num_reflections=num_early_reflections,
+        )
+        transition_time_ms = None
 
     # --- 1f. Synthesize echo sequence(s) ---
     sequences = []
@@ -701,6 +871,7 @@ def analyze_and_synthesize_density(
         seq = synthesize_echo_sequence(
             aed, sr, len(balloon_mono),
             early_reflections=early_refs,
+            transition_sample=transition_sample,
             rng=rng,
         )
         sequences.append(seq)
@@ -713,5 +884,7 @@ def analyze_and_synthesize_density(
         "nwave_duration_s": nwave_duration_s,
         "balloon_radius_m": balloon_radius_m,
         "early_reflections": early_refs,
+        "transition_sample": transition_sample,
+        "transition_time_ms": transition_time_ms,
         "echo_sequences": sequences,
     }

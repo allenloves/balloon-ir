@@ -31,6 +31,7 @@ def process_balloon(
     ned_window_ms: float = 43.0,
     balloon_diameter_cm: Optional[float] = None,
     num_early_reflections: int = 2,
+    ned_transition_threshold: Optional[float] = 0.3,
     random_seed: Optional[int] = None,
     # Stage 2 params (stereo only)
     iccc_window_ms: float = 50.0,
@@ -39,6 +40,7 @@ def process_balloon(
     extrapolate: bool = True,
     noise_floor_db: float = -40.0,
     gain_smoothing_ms: float = 0.0,
+    pulse_halo_ms: float = 2.0,
     f_min: float = 50.0,
     f_max: Optional[float] = None,
     # Stage 4 params
@@ -67,7 +69,10 @@ def process_balloon(
     balloon_diameter_cm : float or None
         Balloon diameter in cm. None = auto-detect.
     num_early_reflections : int
-        Number of early reflections to detect.
+        Number of early reflections to detect (legacy mode only).
+    ned_transition_threshold : float or None
+        NED value for sparse→dense phase transition. Default 0.3.
+        Set to None for legacy fixed-count early reflection detection.
     random_seed : int or None
         Random seed for reproducibility.
     iccc_window_ms : float
@@ -80,6 +85,8 @@ def process_balloon(
         Noise floor threshold for extrapolation.
     gain_smoothing_ms : float
         Gain function smoothing in ms. Default 0.
+    pulse_halo_ms : float
+        Half-width of gain halo around early pulses in ms. Default 2.0.
     f_min : float
         Lowest filter bank center frequency in Hz.
     f_max : float or None
@@ -136,9 +143,11 @@ def process_balloon(
         ned_window_ms=ned_window_ms,
         balloon_diameter_cm=balloon_diameter_cm,
         num_early_reflections=num_early_reflections,
+        ned_transition_threshold=ned_transition_threshold,
         num_sequences=num_sequences,
         random_seed=random_seed,
     )
+    transition_sample = density_result.get("transition_sample", None)
     _progress(30, "Echo density analysis complete")
 
     # ===== Stage 2: Spatial Character (stereo only) =====
@@ -166,6 +175,8 @@ def process_balloon(
             noise_floor_db=noise_floor_db,
             gain_smoothing_ms=gain_smoothing_ms,
             f_min=f_min, f_max=f_max,
+            transition_sample=transition_sample,
+            pulse_halo_ms=pulse_halo_ms,
         )
         _progress(70, "Left channel shaped")
 
@@ -176,6 +187,8 @@ def process_balloon(
             noise_floor_db=noise_floor_db,
             gain_smoothing_ms=gain_smoothing_ms,
             f_min=f_min, f_max=f_max,
+            transition_sample=transition_sample,
+            pulse_halo_ms=pulse_halo_ms,
         )
         ir_raw = np.column_stack([ir_left, ir_right])
         _progress(80, "Energy shaping complete")
@@ -187,6 +200,8 @@ def process_balloon(
             noise_floor_db=noise_floor_db,
             gain_smoothing_ms=gain_smoothing_ms,
             f_min=f_min, f_max=f_max,
+            transition_sample=transition_sample,
+            pulse_halo_ms=pulse_halo_ms,
         )
         _progress(80, "Energy shaping complete")
 

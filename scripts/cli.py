@@ -62,7 +62,10 @@ examples:
     parser.add_argument("--balloon-diameter", type=float, default=None,
                         help="Balloon diameter in cm (default: auto-detect)")
     parser.add_argument("--early-reflections", type=int, default=2,
-                        help="Number of early reflections to detect (default: 2)")
+                        help="Number of early reflections to detect (legacy mode, default: 2)")
+    parser.add_argument("--ned-transition", type=float, default=0.3,
+                        help="NED threshold for sparse→dense transition (default: 0.3). "
+                             "Set to 0 to disable NED-guided detection (legacy mode)")
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed for reproducibility")
 
@@ -79,6 +82,8 @@ examples:
                         help="Noise floor threshold in dB (default: -40)")
     parser.add_argument("--gain-smoothing", type=float, default=0.0,
                         help="Gain function smoothing in ms (default: 0)")
+    parser.add_argument("--pulse-halo", type=float, default=2.0,
+                        help="Half-width of gain halo around early pulses in ms (default: 2.0)")
 
     # Stage 4
     parser.add_argument("--target-dbfs", type=float, default=-1.0,
@@ -118,6 +123,9 @@ examples:
     progress = None if args.quiet else make_progress_bar()
     t0 = time.time()
 
+    # ned_transition=0 means legacy mode (no NED-guided detection)
+    ned_threshold = args.ned_transition if args.ned_transition > 0 else None
+
     result = process_balloon(
         str(input_path),
         target_sr=args.target_sr,
@@ -125,12 +133,14 @@ examples:
         ned_window_ms=args.ned_window,
         balloon_diameter_cm=args.balloon_diameter,
         num_early_reflections=args.early_reflections,
+        ned_transition_threshold=ned_threshold,
         random_seed=args.seed,
         iccc_window_ms=args.iccc_window,
         energy_window_ms=args.energy_window,
         extrapolate=not args.no_extrapolate,
         noise_floor_db=args.noise_floor,
         gain_smoothing_ms=args.gain_smoothing,
+        pulse_halo_ms=args.pulse_halo,
         target_dbfs=args.target_dbfs,
         fade_ms=args.fade,
         trim_threshold_db=args.trim_threshold,
@@ -156,6 +166,8 @@ examples:
         print(f"  Balloon radius:   {density['balloon_radius_m']*100:.1f} cm")
         print(f"  N-wave duration:  {density['nwave_duration_s']*1000:.2f} ms")
         print(f"  Early refs:       {len(density['early_reflections'])}")
+        if density.get('transition_time_ms') is not None:
+            print(f"  Transition:       {density['transition_time_ms']:.1f} ms (NED-guided)")
         print(f"  Processing time:  {elapsed:.1f} s")
         print()
         print(f"  Saved: {output_path}")
