@@ -17,4 +17,4 @@ jobs:
       - name: Push to Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: git push https://allenloves:$HF_TOKEN@huggingface.co/spaces/allenloves/balloon-ir main
+        run: git push --force https://allenloves:$HF_TOKEN@huggingface.co/spaces/allenloves/balloon-ir main
