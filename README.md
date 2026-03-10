@@ -11,16 +11,50 @@ app_port: 7860
 
 Convert balloon pop recordings into clean, full-bandwidth room impulse responses.
 
-Based on Abel et al. (2010), *"Estimating Room Impulse Responses from Recorded Balloon Pops"*, AES Convention Paper 8171.
+Based on Abel, Canfield-Dafilou & Holloway (2010), [*"Estimating Room Impulse Responses from Recorded Balloon Pops"*](https://www.researchgate.net/profile/Bissera-Pentcheva/publication/277732009_Estimating_Room_Impulse_Responses_from_Recorded_Balloon_Pops/links/563a4b4408ae45b5d284a8ce/Estimating-Room-Impulse-Responses-from-Recorded-Balloon-Pops.pdf), AES Convention 129, Paper 8171.
+
+## Demo
+
+- **Web App**: [allenloves.github.io/balloon-ir](https://allenloves.github.io/balloon-ir/)
+- **API**: [allenloves-balloon-ir.hf.space](https://allenloves-balloon-ir.hf.space/docs)
+
+## Background
+
+A balloon pop produces an N-wave — a pressure pulse whose spectral nulls cause comb-filtering artifacts that make the raw recording unsuitable as a room impulse response. This tool implements an analysis-resynthesis approach: it analyzes the acoustic properties of the balloon recording (echo density, spatial characteristics, spectral energy) and synthesizes a new IR that preserves the room's reverberant character while eliminating the N-wave artifacts.
+
+## Processing Pipeline
+
+| Stage | Description | Key Equations |
+|-------|-------------|---------------|
+| **0. Preprocessing** | Onset detection, normalization, optional resampling | — |
+| **1. Echo Density** | NED/AED analysis, N-wave characterization, sparse-to-dense transition detection, Poisson pulse synthesis | Eq. 3–5, 8 |
+| **2. Spatial** | Inter-channel cross-correlation (ICCC) analysis, stereo correlation imposition via rotation matrix | Eq. 9–11 |
+| **3. Energy Shaping** | 1/3-octave filter bank, band energy imprinting, direct path equalization, energy extrapolation below noise floor | Eq. 14, 16 |
+| **4. Post-processing** | Normalization, fade-out, tail trimming, WAV export | — |
 
 ## Project Structure
 
 ```
-core/           DSP pipeline (5-stage analysis-resynthesis)
-api/            FastAPI web backend
-frontend/       React + Vite frontend
-scripts/        CLI tools (cli.py, generate_plots.py, validate_ir.py)
-tests/          Unit tests
+core/               DSP pipeline modules
+  preprocessing.py    Stage 0: onset detection, normalization
+  echo_density.py     Stage 1: NED, AED, Poisson pulse synthesis
+  spatial.py          Stage 2: ICCC analysis, stereo rotation
+  energy_shaping.py   Stage 3: filter bank, energy imprinting
+  postprocessing.py   Stage 4: normalize, fade, trim, export
+  pipeline.py         Orchestrates all stages
+  visualization.py    Diagnostic plot generation
+api/                FastAPI web backend
+  main.py             App entry point + CORS
+  routes.py           Endpoints (process, status, result, preview)
+  tasks.py            Background job management
+frontend/           React + Vite frontend
+  src/App.jsx         Main app with upload → process → results flow
+  src/components/     UploadZone, ParameterPanel, ProgressTracker, ResultsView, AudioPlayer
+scripts/            CLI tools
+  cli.py              Command-line processing
+  generate_plots.py   Batch plot generation
+  validate_ir.py      Room acoustic parameter validation (RT60, EDT, C80, D50, Ts)
+tests/              Unit tests (76 tests)
 ```
 
 ## Quick Start
@@ -30,6 +64,21 @@ tests/          Unit tests
 ```bash
 conda activate dsp
 python scripts/cli.py balloon.wav -o ir.wav
+```
+
+### CLI Options
+
+```
+--target-sr          Resample to target sample rate (default: keep original)
+--onset-threshold    Onset detection threshold in dB (default: -40)
+--ned-window         NED estimation window in ms (default: 43)
+--balloon-diameter   Balloon diameter in cm (default: auto-detect)
+--ned-transition     NED threshold for sparse/dense transition (default: 0.3)
+--noise-floor        Noise floor threshold in dB (default: -40)
+--pulse-halo         Gain halo around early pulses in ms (default: 2.0)
+--target-dbfs        Output normalization level (default: -1.0)
+--bit-depth          Output bit depth: 16, 24, or 32 (default: 24)
+--seed               Random seed for reproducibility
 ```
 
 ### Local Web App
@@ -46,15 +95,26 @@ Open http://localhost:3000
 
 ## Deployment
 
-- **Frontend**: GitHub Pages (auto-deploy on push via GitHub Actions)
-- **Backend**: Hugging Face Spaces (Docker, free tier — 16 GB RAM)
+| Component | Platform | URL |
+|-----------|----------|-----|
+| Frontend | GitHub Pages | [allenloves.github.io/balloon-ir](https://allenloves.github.io/balloon-ir/) |
+| Backend | Hugging Face Spaces (Docker) | [allenloves-balloon-ir.hf.space](https://allenloves-balloon-ir.hf.space/) |
+
+Auto-deploy on push to `main` via GitHub Actions.
 
 ### Known Limitations
 
-- **In-memory job store**: Jobs are lost on container restart. For production use, replace with a database + file storage backend.
-- **Cold starts**: HF Spaces may sleep after extended inactivity (~48h). Cold start involves rebuilding the Docker container (1-2 min).
-- **Render free tier (deprecated)**: Previously used Render, but 512 MB RAM was insufficient for the DSP pipeline. Kept `render.yaml` for reference.
+- **In-memory job store**: Processing jobs are stored in memory. Jobs are lost on container restart. For production use, replace with a database + file storage backend.
+- **Cold starts**: HF Spaces may sleep after extended inactivity. Cold start requires rebuilding the Docker container (1–2 min).
+- **Single worker**: One job at a time. Concurrent uploads will queue.
+
+## Requirements
+
+- Python 3.11+
+- numpy, scipy, soundfile, matplotlib
+- FastAPI, uvicorn (for web backend)
+- Node.js 20+ (for frontend development)
 
 ## References
 
-Abel, J. S., Canfield-Dafilou, E. K., & Holloway, M. (2010). Estimating room impulse responses from recorded balloon pops. *Audio Engineering Society Convention 129*, Paper 8171.
+Abel, J. S., Canfield-Dafilou, E. K., & Holloway, M. (2010). [Estimating room impulse responses from recorded balloon pops](https://www.researchgate.net/profile/Bissera-Pentcheva/publication/277732009_Estimating_Room_Impulse_Responses_from_Recorded_Balloon_Pops/links/563a4b4408ae45b5d284a8ce/Estimating-Room-Impulse-Responses-from-Recorded-Balloon-Pops.pdf). *Audio Engineering Society Convention 129*, Paper 8171.
