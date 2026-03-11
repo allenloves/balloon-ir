@@ -40,6 +40,9 @@ frontend/node_modules/
 frontend/dist/
 frontend/.env.local
 
+# Spec
+balloon-ir-spec.md
+
 # Jupyter
 .ipynb_checkpoints/
 
