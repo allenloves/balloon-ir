@@ -23,6 +23,9 @@ env/
 .DS_Store
 Thumbs.db
 
+# PDF
+*.pdf
+
 # Audio files (large, not tracked)
 *.wav
 *.mp3
