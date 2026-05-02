@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Balloon IR Synthesizer (standalone)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Instrument+Serif:ital@0;1&family=Work+Sans:wght@300;400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #f5f3ee;
+        --fg: #1a1a1a;
+        --muted: #6b6b6b;
+        --line: #d8d4cb;
+        --accent: #1a1a1a;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Work Sans", sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        line-height: 1.5;
+      }
+      .app {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 48px 24px 96px;
+      }
+      h1 {
+        font-family: "Instrument Serif", serif;
+        font-weight: 400;
+        font-size: 48px;
+        margin: 0 0 4px;
+        letter-spacing: -0.02em;
+      }
+      h1 em { font-style: italic; }
+      .subtitle {
+        color: var(--muted);
+        font-size: 14px;
+        margin: 0 0 40px;
+      }
+      .subtitle a { color: var(--muted); }
+      section {
+        border-top: 1px solid var(--line);
+        padding: 24px 0;
+      }
+      label.file-pick {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        padding: 32px;
+        border: 1px dashed var(--line);
+        border-radius: 8px;
+        cursor: pointer;
+        font-family: "DM Mono", monospace;
+        font-size: 13px;
+        color: var(--muted);
+        background: #fff;
+      }
+      label.file-pick:hover { border-color: var(--accent); color: var(--accent); }
+      input[type="file"] { display: none; }
+      .params {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px 24px;
+      }
+      .param {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .param label {
+        font-family: "DM Mono", monospace;
+        font-size: 11px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .param input {
+        font-family: "DM Mono", monospace;
+        font-size: 13px;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: #fff;
+        color: var(--fg);
+      }
+      .param input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+      button {
+        font-family: "Work Sans", sans-serif;
+        font-size: 14px;
+        font-weight: 500;
+        padding: 12px 20px;
+        border: 1px solid var(--accent);
+        border-radius: 4px;
+        background: var(--accent);
+        color: #fff;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.4; cursor: not-allowed; }
+      button.secondary { background: transparent; color: var(--accent); }
+      .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .status {
+        font-family: "DM Mono", monospace;
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 12px;
+        min-height: 1.4em;
+      }
+      .progress {
+        margin-top: 12px;
+        height: 4px;
+        background: var(--line);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .progress-bar {
+        height: 100%;
+        width: 0;
+        background: var(--accent);
+        transition: width 0.2s;
+      }
+      .summary {
+        font-family: "DM Mono", monospace;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 12px;
+      }
+      details summary {
+        cursor: pointer;
+        font-family: "DM Mono", monospace;
+        font-size: 12px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 16px;
+      }
+      details[open] summary { margin-bottom: 16px; }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <h1>Balloon <em>IR</em> Synthesizer</h1>
+        <p class="subtitle">
+          Standalone (in-browser) build &mdash; runs entirely client-side via Pyodide. Based on
+          <a
+            href="https://www.researchgate.net/profile/Bissera-Pentcheva/publication/277732009_Estimating_Room_Impulse_Responses_from_Recorded_Balloon_Pops/links/563a4b4408ae45b5d284a8ce/Estimating-Room-Impulse-Responses-from-Recorded-Balloon-Pops.pdf"
+            target="_blank"
+            rel="noopener noreferrer"
+            >Abel et al. 2010</a
+          >.
+        </p>
+      </header>
+
+      <section>
+        <label class="file-pick" for="file">
+          <span id="file-label">Click to choose a balloon-pop WAV…</span>
+          <input id="file" type="file" accept="audio/wav,.wav" />
+        </label>
+      </section>
+
+      <section>
+        <details>
+          <summary>Parameters</summary>
+          <form id="params" class="params" onsubmit="return false">
+            <div class="param">
+              <label>onset_threshold_db</label>
+              <input name="onset_threshold_db" type="number" step="1" value="-40" />
+            </div>
+            <div class="param">
+              <label>ned_window_ms</label>
+              <input name="ned_window_ms" type="number" step="1" value="43" />
+            </div>
+            <div class="param">
+              <label>ned_transition_threshold</label>
+              <input name="ned_transition_threshold" type="number" step="0.05" value="0.3" />
+            </div>
+            <div class="param">
+              <label>pulse_halo_ms</label>
+              <input name="pulse_halo_ms" type="number" step="0.5" value="2.0" />
+            </div>
+            <div class="param">
+              <label>noise_floor_db</label>
+              <input name="noise_floor_db" type="number" step="1" value="-40" />
+            </div>
+            <div class="param">
+              <label>gain_smoothing_ms</label>
+              <input name="gain_smoothing_ms" type="number" step="0.5" value="0" />
+            </div>
+            <div class="param">
+              <label>target_dbfs</label>
+              <input name="target_dbfs" type="number" step="0.5" value="-1" />
+            </div>
+          </form>
+        </details>
+      </section>
+
+      <section>
+        <button id="run" disabled>Synthesize IR</button>
+        <div class="status" id="status">Choose a WAV file to begin.</div>
+        <div class="progress" id="progress" hidden><div class="progress-bar" id="progress-bar"></div></div>
+      </section>
+
+      <section id="result" hidden>
+        <div class="summary" id="summary"></div>
+        <div class="row">
+          <button id="play" class="secondary">Play</button>
+          <button id="stop" class="secondary">Stop</button>
+          <button id="download">Download WAV (24-bit)</button>
+        </div>
+      </section>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
