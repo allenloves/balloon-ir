@@ -119,15 +119,14 @@ function asU8(f32) {
 }
 
 function bytesToF32(u8) {
-  // u8 is a Uint8Array view (from Python bytes). Float32Array needs the
-  // bytes to be 4-byte-aligned in their underlying buffer; if not, copy.
-  const aligned = u8.byteOffset % 4 === 0;
-  if (aligned) {
-    return new Float32Array(u8.buffer, u8.byteOffset, u8.byteLength / 4);
-  }
-  const copy = new Uint8Array(u8.byteLength);
-  copy.set(u8);
-  return new Float32Array(copy.buffer);
+  // Always copy into a fresh ArrayBuffer. The source Uint8Array can be a
+  // view onto Pyodide's WASM heap, which gets detached whenever the heap
+  // grows later (e.g. during matplotlib plot rendering). A view onto a
+  // detached buffer reads as zero — silent audio. Copying here makes the
+  // Float32Array independent of anything Pyodide does afterwards.
+  const copy = new ArrayBuffer(u8.byteLength);
+  new Uint8Array(copy).set(u8);
+  return new Float32Array(copy);
 }
 
 function loadScript(src) {
