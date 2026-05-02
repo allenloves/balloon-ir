@@ -12,6 +12,7 @@ const CORE_FILES = [
   "spatial.py",
   "energy_shaping.py",
   "postprocessing.py",
+  "pipeline.py",
   "visualization.py",
 ];
 
