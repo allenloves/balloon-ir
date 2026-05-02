@@ -142,6 +142,49 @@
         margin-bottom: 16px;
       }
       details[open] summary { margin-bottom: 16px; }
+      .toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-family: "DM Mono", monospace;
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 12px;
+        cursor: pointer;
+      }
+      .toggle input { margin: 0; }
+      .plots {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        margin-top: 24px;
+      }
+      .plot {
+        margin: 0;
+      }
+      .plot img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: #fff;
+      }
+      .plot.pending img {
+        min-height: 180px;
+        background: repeating-linear-gradient(
+          45deg, #fff, #fff 10px, #f3efe7 10px, #f3efe7 20px
+        );
+      }
+      .plot.pending figcaption { font-style: italic; opacity: 0.6; }
+      .plot figcaption {
+        font-family: "DM Mono", monospace;
+        font-size: 11px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-top: 6px;
+      }
     </style>
   </head>
   <body>
@@ -204,6 +247,10 @@
 
       <section>
         <button id="run" disabled>Synthesize IR</button>
+        <label class="toggle">
+          <input type="checkbox" id="generate-plots" checked />
+          Generate diagnostic plots
+        </label>
         <div class="status" id="status">Choose a WAV file to begin.</div>
         <div class="progress" id="progress" hidden><div class="progress-bar" id="progress-bar"></div></div>
       </section>
@@ -215,6 +262,7 @@
           <button id="stop" class="secondary">Stop</button>
           <button id="download">Download WAV (24-bit)</button>
         </div>
+        <div class="plots" id="plots"></div>
       </section>
     </div>
 

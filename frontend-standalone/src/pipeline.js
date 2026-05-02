@@ -12,6 +12,7 @@ const CORE_FILES = [
   "spatial.py",
   "energy_shaping.py",
   "postprocessing.py",
+  "visualization.py",
 ];
 
 let _pyodidePromise = null;
@@ -28,8 +29,8 @@ async function init(onLog) {
   }
   const pyodide = await window.loadPyodide();
 
-  onLog("Loading numpy + scipy + soundfile (this is the heavy bit, ~30 MB)…");
-  await pyodide.loadPackage(["numpy", "scipy", "soundfile"]);
+  onLog("Loading numpy + scipy + soundfile + matplotlib (heavy: ~40 MB first time)…");
+  await pyodide.loadPackage(["numpy", "scipy", "soundfile", "matplotlib"]);
 
   onLog("Mounting Python modules…");
   pyodide.FS.mkdirTree("core");
@@ -86,12 +87,30 @@ bridge.process_array(_left, _right, int(_js_sr), **_kwargs)
   // those buffers as Float32Array so the rest of the app sees regular samples.
   const obj = result.toJs({ dict_converter: Object.fromEntries });
   result.destroy();
+
+  // plot_names arrives as a JS Array via toJs.
+  const plotNames = obj.plot_names ? Array.from(obj.plot_names) : [];
+
   return {
     sr: obj.sr,
     channels: obj.channels,
     left: bytesToF32(obj.left),
     right: obj.right ? bytesToF32(obj.right) : null,
+    plotNames,
   };
+}
+
+// Render a single plot from the most recent process_array() run.
+// Returns a base64-encoded PNG string. Each call yields control back to
+// the event loop, so audio playback / UI updates stay responsive between
+// plots.
+export async function renderPlot(pyodide, name, dpi = 100) {
+  pyodide.globals.set("_js_plot_name", name);
+  pyodide.globals.set("_js_plot_dpi", dpi);
+  const b64 = await pyodide.runPythonAsync(
+    "bridge.render_plot(str(_js_plot_name), dpi=int(_js_plot_dpi))",
+  );
+  return b64;
 }
 
 function asU8(f32) {

@@ -19,8 +19,8 @@ python -m http.server 8000
 # then open http://localhost:8000/frontend-standalone/
 ```
 
-First visit downloads ~30 MB (Pyodide runtime + numpy + scipy wheels)
-and caches it. Subsequent visits are instant.
+First visit downloads ~40 MB (Pyodide runtime + numpy + scipy + soundfile +
+matplotlib wheels) and caches it. Subsequent visits are instant.
 
 ## How it works
 
@@ -53,9 +53,11 @@ rather than round-tripping through Pyodide's virtual filesystem.
 ## Limitations vs. the React + FastAPI version
 
 - No server-side caching of jobs (you re-run from scratch each time).
-- No matplotlib previews. Plots could be added later (matplotlib runs
-  in Pyodide), but the analysis-only previews aren't wired up here.
-- First-run download is large (~30 MB).
+- First-run download is large (~40 MB).
+- Plot rendering happens in the browser via matplotlib (Agg backend).
+  It works, but uses the same `core/visualization.py` code so the look
+  matches the API version exactly. Toggle off "Generate diagnostic plots"
+  to skip this step (a few seconds per run).
 
 ## Deploying as a fully static site
 

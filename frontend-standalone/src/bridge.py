@@ -15,6 +15,11 @@ from core.energy_shaping import shape_energy
 from core.postprocessing import postprocess
 
 
+# Module-level cache for the most recent run, used by render_plot() so
+# JavaScript can pull plots one at a time without re-running the pipeline.
+_LAST = {}
+
+
 def process_array(
     audio_left,
     audio_right,
@@ -139,7 +144,26 @@ def process_array(
         trim_threshold_db=trim_threshold_db,
         output_length_s=output_length_s,
     )
+
     _p(100, "Done")
+
+    # Stash everything plot-rendering needs so JS can fetch plots one at a
+    # time afterwards (see render_plot). We don't ship this state to JS now —
+    # the user wants the audio back as soon as the pipeline finishes.
+    _LAST.clear()
+    _LAST.update({
+        "result": {
+            "ir": ir_final,
+            "sr": sr,
+            "is_stereo": is_stereo,
+            "echo_density": density_result,
+            "iccc_profile": iccc_profile,
+        },
+        "balloon_mono": mono,
+        "sr": sr,
+        "onset": onset_in_trimmed,
+        "energy_window_ms": energy_window_ms,
+    })
 
     # Return raw float32 bytes — Pyodide hands these to JS as Uint8Array,
     # which we reinterpret as Float32Array on the other side. This avoids
@@ -153,10 +177,142 @@ def process_array(
             "channels": 1,
             "left": _f32_bytes(ir_final),
             "right": None,
+            "plot_names": _available_plot_names(is_stereo, iccc_profile),
         }
     return {
         "sr": int(sr),
         "channels": 2,
         "left": _f32_bytes(ir_final[:, 0]),
         "right": _f32_bytes(ir_final[:, 1]),
+        "plot_names": _available_plot_names(is_stereo, iccc_profile),
     }
+
+
+def _available_plot_names(is_stereo, iccc_profile):
+    names = [
+        "summary",
+        "ned_profile",
+        "waveform_comparison",
+        "spectrogram_comparison",
+        "band_energy",
+        "echo_sequence",
+    ]
+    if is_stereo and iccc_profile is not None:
+        names.append("iccc_profile")
+    return names
+
+
+def render_plot(name: str, dpi: int = 100) -> str:
+    """
+    Render a single diagnostic plot from the most recent process_array() run.
+    Returns a base64-encoded PNG string. Each call yields control back to the
+    JS event loop between calls, so audio playback stays responsive.
+    """
+    if not _LAST:
+        raise RuntimeError("No pipeline result cached — call process_array first.")
+
+    import base64
+    from io import BytesIO
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    _patch_specgram(plt)
+
+    from core.visualization import (
+        plot_ned_profile,
+        plot_waveform_comparison,
+        plot_spectrogram_comparison,
+        plot_band_energy,
+        plot_echo_sequence,
+        plot_iccc_profile,
+        plot_summary,
+    )
+
+    result = _LAST["result"]
+    balloon_mono = _LAST["balloon_mono"]
+    sr = _LAST["sr"]
+    onset = _LAST["onset"]
+    energy_window_ms = _LAST["energy_window_ms"]
+    ir = result["ir"]
+
+    if name == "ned_profile":
+        fig = plot_ned_profile(result, sr, onset=onset)
+    elif name == "waveform_comparison":
+        fig = plot_waveform_comparison(balloon_mono, ir, sr)
+    elif name == "spectrogram_comparison":
+        fig = plot_spectrogram_comparison(balloon_mono, ir, sr)
+    elif name == "band_energy":
+        fig = plot_band_energy(balloon_mono, ir, sr, onset=onset,
+                               energy_window_ms=energy_window_ms)
+    elif name == "echo_sequence":
+        fig = plot_echo_sequence(result, sr, onset=onset)
+    elif name == "iccc_profile":
+        fig = plot_iccc_profile(result["iccc_profile"], sr)
+    elif name == "summary":
+        fig = plot_summary(result, balloon_mono, sr, onset=onset,
+                           energy_window_ms=energy_window_ms)
+    else:
+        raise ValueError(f"Unknown plot name: {name}")
+
+    buf = BytesIO()
+    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _patch_specgram(plt):
+    """
+    Replace matplotlib.axes.Axes.specgram with a chunked rFFT version that
+    avoids `numpy.lib.stride_tricks.sliding_window_view` (which fails with
+    `ValueError: array is too big` in WASM/Pyodide for long signals).
+
+    Idempotent — only patches once per process.
+    """
+    from matplotlib.axes import Axes
+    if getattr(Axes.specgram, "_pyodide_patched", False):
+        return
+
+    def specgram(self, x, NFFT=256, Fs=2, Fc=0, detrend=None, window=None,
+                 noverlap=128, cmap=None, xextent=None, pad_to=None,
+                 sides=None, scale_by_freq=None, mode=None, scale=None,
+                 vmin=None, vmax=None, *, data=None, **kwargs):
+        x = np.asarray(x, dtype=np.float64)
+        nfft = int(NFFT)
+        nover = int(noverlap)
+        step = nfft - nover
+        if step <= 0:
+            raise ValueError("noverlap must be < NFFT")
+
+        n_segs = max(1, (len(x) - nfft) // step + 1)
+        win = np.hanning(nfft)
+        win_norm = (win ** 2).sum() * Fs
+
+        Pxx = np.empty((nfft // 2 + 1, n_segs), dtype=np.float64)
+        for i in range(n_segs):
+            seg = x[i * step : i * step + nfft] * win
+            spec = np.fft.rfft(seg, n=nfft)
+            Pxx[:, i] = (spec.conj() * spec).real / win_norm
+
+        # Match matplotlib's default 'psd' density convention; double interior bins.
+        Pxx[1:-1, :] *= 2
+
+        freqs = np.fft.rfftfreq(nfft, 1.0 / Fs) + Fc
+        bins = (np.arange(n_segs) * step + nfft / 2.0) / Fs
+
+        # Convert to dB if requested.
+        Z = 10.0 * np.log10(np.maximum(Pxx, 1e-20)) if scale == "dB" else Pxx
+
+        if xextent is None:
+            xextent = (bins[0], bins[-1]) if n_segs > 1 else (0, nfft / Fs)
+        extent = (xextent[0], xextent[1], freqs[0], freqs[-1])
+
+        im = self.imshow(
+            Z, cmap=cmap, extent=extent, origin="lower",
+            aspect="auto", vmin=vmin, vmax=vmax,
+        )
+        return Pxx, freqs, bins, im
+
+    specgram._pyodide_patched = True
+    Axes.specgram = specgram

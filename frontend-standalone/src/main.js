@@ -1,5 +1,5 @@
 import { decodeWav, encodeWav } from "./wav.js";
-import { loadPipeline, runPipeline } from "./pipeline.js";
+import { loadPipeline, runPipeline, renderPlot } from "./pipeline.js";
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -15,6 +15,8 @@ const stopBtn = $("#stop");
 const downloadBtn = $("#download");
 const summaryEl = $("#summary");
 const paramsForm = $("#params");
+const plotsEl = $("#plots");
+const plotsToggle = $("#generate-plots");
 
 let pyodide = null;
 let inputAudio = null; // { channels: [Float32Array], sampleRate }
@@ -76,8 +78,15 @@ runBtn.addEventListener("click", async () => {
       (pct, msg) => setProgress(pct, msg),
     );
 
-    setProgress(100, "Done.");
+    // Audio is ready — show it now so the user can play / download
+    // immediately, then stream the plots in afterwards.
     showResult();
+
+    if (plotsToggle.checked && resultAudio.plotNames?.length) {
+      await streamPlots(resultAudio.plotNames);
+    } else {
+      log("Done.");
+    }
   } catch (e) {
     console.error(e);
     log(`Error: ${e.message}`);
@@ -85,6 +94,48 @@ runBtn.addEventListener("click", async () => {
     runBtn.disabled = false;
   }
 });
+
+async function streamPlots(names) {
+  // Render plots one by one, awaiting between each so the audio playback
+  // and other UI events can run on the main thread between renders.
+  plotsEl.innerHTML = "";
+  // Pre-create skeleton tiles so the user sees what's coming.
+  const tiles = {};
+  for (const key of PLOT_ORDER) {
+    if (!names.includes(key)) continue;
+    const fig = document.createElement("figure");
+    fig.className = "plot pending";
+    const img = document.createElement("img");
+    img.alt = PLOT_LABELS[key] || key;
+    const cap = document.createElement("figcaption");
+    cap.textContent = `${PLOT_LABELS[key] || key} — pending…`;
+    fig.appendChild(img);
+    fig.appendChild(cap);
+    plotsEl.appendChild(fig);
+    tiles[key] = { fig, img, cap };
+  }
+
+  const total = Object.keys(tiles).length;
+  let i = 0;
+  for (const key of PLOT_ORDER) {
+    if (!tiles[key]) continue;
+    i += 1;
+    log(`Rendering plot ${i}/${total}: ${PLOT_LABELS[key] || key}…`);
+    // Yield to the event loop before each render so any pending audio /
+    // playback events get a chance to run.
+    await new Promise((r) => requestAnimationFrame(r));
+    try {
+      const b64 = await renderPlot(pyodide, key);
+      tiles[key].img.src = `data:image/png;base64,${b64}`;
+      tiles[key].cap.textContent = PLOT_LABELS[key] || key;
+      tiles[key].fig.classList.remove("pending");
+    } catch (e) {
+      console.error(`Plot ${key} failed:`, e);
+      tiles[key].cap.textContent = `${PLOT_LABELS[key] || key} — failed`;
+    }
+  }
+  log("All plots rendered.");
+}
 
 function readParams() {
   const data = new FormData(paramsForm);
@@ -103,6 +154,20 @@ function readParams() {
   };
 }
 
+const PLOT_LABELS = {
+  summary: "Summary",
+  ned_profile: "NED profile",
+  waveform_comparison: "Waveform comparison",
+  spectrogram_comparison: "Spectrogram comparison",
+  band_energy: "Band energy decay",
+  echo_sequence: "Echo sequence",
+  iccc_profile: "ICCC profile (stereo)",
+};
+const PLOT_ORDER = [
+  "summary", "ned_profile", "waveform_comparison",
+  "spectrogram_comparison", "band_energy", "echo_sequence", "iccc_profile",
+];
+
 function showResult() {
   const left = resultAudio.left;
   const right = resultAudio.right;
@@ -113,6 +178,7 @@ function showResult() {
     `${channels.length === 1 ? "Mono" : "Stereo"} IR · ${sr} Hz · ${sec}s · ${left.length} samples`;
   resultEl.hidden = false;
   resultAudio._channels = channels;
+  plotsEl.innerHTML = "";
 }
 
 playBtn.addEventListener("click", async () => {
