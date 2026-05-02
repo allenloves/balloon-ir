@@ -20,23 +20,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install dependencies
-        working-directory: frontend
-        run: npm ci
-
-      - name: Build
-        working-directory: frontend
-        run: npm run build
+      - name: Stage static site
+        run: |
+          mkdir -p _site/frontend _site/core
+          cp -r frontend/. _site/frontend/
+          cp core/*.py _site/core/
+          cat > _site/index.html <<'HTML'
+          <!DOCTYPE html>
+          <meta charset="utf-8">
+          <title>Balloon IR Synthesizer</title>
+          <meta http-equiv="refresh" content="0; url=frontend/">
+          <link rel="canonical" href="frontend/">
+          <p><a href="frontend/">Continue to the Balloon IR Synthesizer →</a></p>
+          HTML
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: frontend/dist
+          path: _site
 
   deploy:
     needs: build

@@ -1,11 +1,11 @@
-# Balloon IR Synthesizer — standalone (no API server)
+# Balloon IR Synthesizer — frontend
 
-This is a 100% client-side build of the balloon-pop → room IR pipeline.
-The same Python code under [`core/`](../core) runs in the browser via
+100% client-side build of the balloon-pop → room IR pipeline. The same
+Python code under [`core/`](../core) runs in the browser via
 [Pyodide](https://pyodide.org/) (CPython compiled to WebAssembly).
 
-There is no FastAPI server, no job queue, no upload — the WAV file
-never leaves your machine.
+There is no API server, no job queue, no upload — the WAV file never
+leaves your machine.
 
 ## How to run locally
 
@@ -16,7 +16,7 @@ this folder). For example:
 ```bash
 cd "/path/to/balloon"
 python -m http.server 8000
-# then open http://localhost:8000/frontend-standalone/
+# then open http://localhost:8000/frontend/
 ```
 
 First visit downloads ~40 MB (Pyodide runtime + numpy + scipy + soundfile +
@@ -47,21 +47,21 @@ rather than round-tripping through Pyodide's virtual filesystem.
 | `index.html`     | UI                                                     |
 | `src/main.js`    | Glue: file picker, params, progress, audio playback    |
 | `src/wav.js`     | WAV decode / encode (PCM 16/24/32, float 32/64)        |
-| `src/pipeline.js`| Loads Pyodide + numpy + scipy + `core/*.py`            |
+| `src/pipeline.js`| Loads Pyodide + numpy + scipy + matplotlib + `core/*.py` |
 | `src/bridge.py`  | Python entry point that takes Float32Arrays            |
 
-## Limitations vs. the React + FastAPI version
+## Limitations
 
-- No server-side caching of jobs (you re-run from scratch each time).
-- First-run download is large (~40 MB).
-- Plot rendering happens in the browser via matplotlib (Agg backend).
-  It works, but uses the same `core/visualization.py` code so the look
-  matches the API version exactly. Toggle off "Generate diagnostic plots"
-  to skip this step (a few seconds per run).
+- First-run download is large (~40 MB) for the Pyodide runtime + wheels.
+- Plot rendering reuses `core/visualization.py` and runs in the browser
+  via matplotlib (Agg backend). Toggle off "Generate diagnostic plots"
+  to skip — audio synthesis itself takes only a few seconds.
 
 ## Deploying as a fully static site
 
-Copy `core/` and `frontend-standalone/` to any static host (GitHub
-Pages, Netlify, Cloudflare Pages, S3, …) so that `core/*.py` are
-reachable at `../core/<name>.py` relative to `index.html`. No build
+The site needs `core/*.py` reachable at `../core/<name>.py` relative
+to `index.html`. The included `.github/workflows/deploy-frontend.yml`
+stages this layout and publishes to GitHub Pages on every push to
+`main`. To deploy elsewhere (Netlify, Cloudflare Pages, S3, …), copy
+both `frontend/` and `core/` preserving the parent layout. No build
 step required.

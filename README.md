@@ -43,13 +43,16 @@ core/               DSP pipeline modules
   postprocessing.py   Stage 4: normalize, fade, trim, export
   pipeline.py         Orchestrates all stages
   visualization.py    Diagnostic plot generation
-api/                FastAPI web backend
+api/                FastAPI web backend (legacy — used by the hosted demo)
   main.py             App entry point + CORS
   routes.py           Endpoints (process, status, result, preview)
   tasks.py            Background job management
-frontend/           React + Vite frontend
-  src/App.jsx         Main app with upload → process → results flow
-  src/components/     UploadZone, ParameterPanel, ProgressTracker, ResultsView, AudioPlayer
+frontend/           Static in-browser app (Pyodide; no backend required)
+  index.html          UI
+  src/main.js         Glue: upload, params, progress, audio playback
+  src/wav.js          WAV decode / encode
+  src/pipeline.js     Loads Pyodide + numpy + scipy + matplotlib + core/*.py
+  src/bridge.py       Python entry point — reuses core/ pipeline unchanged
 scripts/            CLI tools
   cli.py              Command-line processing
   generate_plots.py   Batch plot generation
@@ -83,37 +86,35 @@ python scripts/cli.py balloon.wav -o ir.wav
 
 ### Local Web App
 
-```bash
-# Terminal 1: backend
-uvicorn api.main:app --reload --port 8000
+The frontend runs entirely in the browser via [Pyodide](https://pyodide.org/) —
+no backend, no API server. Just serve the project directory as static files:
 
-# Terminal 2: frontend
-cd frontend && npm run dev
+```bash
+python -m http.server 8000
+# open http://localhost:8000/frontend/
 ```
 
-Open http://localhost:3000
+First visit downloads ~40 MB (Pyodide runtime + numpy + scipy + soundfile +
+matplotlib wheels) and caches it. See [`frontend/README.md`](frontend/README.md)
+for details.
 
 ## Deployment
 
 | Component | Platform | URL |
 |-----------|----------|-----|
-| Frontend | GitHub Pages | [allenloves.github.io/balloon-ir](https://allenloves.github.io/balloon-ir/) |
-| Backend | Hugging Face Spaces (Docker) | [allenloves-balloon-ir.hf.space](https://allenloves-balloon-ir.hf.space/) |
+| Frontend | GitHub Pages (static) | [allenloves.github.io/balloon-ir](https://allenloves.github.io/balloon-ir/) |
+| Backend (legacy) | Hugging Face Spaces (Docker) | [allenloves-balloon-ir.hf.space](https://allenloves-balloon-ir.hf.space/) |
 
-Auto-deploy on push to `main` via GitHub Actions.
-
-### Known Limitations
-
-- **In-memory job store**: Processing jobs are stored in memory. Jobs are lost on container restart. For production use, replace with a database + file storage backend.
-- **Cold starts**: HF Spaces may sleep after extended inactivity. Cold start requires rebuilding the Docker container (1–2 min).
-- **Single worker**: One job at a time. Concurrent uploads will queue.
+Auto-deploy on push to `main` via GitHub Actions. The frontend now ships as a
+purely static site (no build step) and includes the Python `core/` modules so
+Pyodide can load them client-side; the FastAPI backend is still deployed for
+anyone who needs the HTTP API.
 
 ## Requirements
 
 - Python 3.11+
 - numpy, scipy, soundfile, matplotlib
-- FastAPI, uvicorn (for web backend)
-- Node.js 20+ (for frontend development)
+- FastAPI, uvicorn (only for the legacy HTTP backend in `api/`)
 
 ## References
 
