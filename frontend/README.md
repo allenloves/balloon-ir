@@ -65,3 +65,34 @@ stages this layout and publishes to GitHub Pages on every push to
 `main`. To deploy elsewhere (Netlify, Cloudflare Pages, S3, …), copy
 both `frontend/` and `core/` preserving the parent layout. No build
 step required.
+
+## Upgrading Pyodide
+
+The Pyodide version is pinned in
+[`src/pipeline.js`](src/pipeline.js) as
+`PYODIDE_VERSION`. Bumping it also swaps in the numpy / scipy /
+matplotlib / soundfile wheels that Pyodide bundles for that release,
+so the upgrade can shift behavior in subtle ways. Validation
+checklist before you commit a version bump:
+
+1. Edit `PYODIDE_VERSION` in `src/pipeline.js`.
+2. Hard-reload the page (`Cmd+Shift+R`) so the new runtime + wheels
+   are fetched. Watch the network tab to confirm everything is 200.
+3. **Mono path**: load a mono WAV → Synthesize → **Play** should
+   produce sound → **Download** should give a non-silent file.
+4. **Stereo path**: same with a stereo WAV. Confirm the ICCC plot
+   appears in addition to the other six.
+5. **All seven plots render** — `summary`, `ned_profile`,
+   `waveform_comparison`, `spectrogram_comparison`, `band_energy`,
+   `echo_sequence`, `iccc_profile` (stereo only). The spectrogram
+   especially exercises the `_patch_specgram` workaround in
+   `src/bridge.py`; if matplotlib's internals change, that patch may
+   need to be re-aligned.
+6. Audio remains audible **after** plot rendering completes — this
+   exercises the WASM-heap-detach defense in `bytesToF32`
+   (`src/pipeline.js`). If Play goes silent only after plots have
+   rendered, suspect the bytes-to-Float32Array path.
+
+Skim the [Pyodide changelog](https://pyodide.org/en/stable/project/changelog.html)
+for the version range you're crossing — the *Type conversions* and
+*FFI* sections are the ones most likely to affect this app.

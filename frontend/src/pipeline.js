@@ -3,7 +3,11 @@
 // Loads core/*.py from the project root (served as static files) and
 // bridge.py from this directory, then exposes runPipeline().
 
-const PYODIDE_URL = "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js";
+// Pinned Pyodide version. Changing this also swaps in the numpy/scipy/
+// matplotlib/soundfile wheels bundled with that release. Before bumping,
+// see frontend/README.md → "Upgrading Pyodide" for the validation checklist.
+const PYODIDE_VERSION = "0.29.3";
+const PYODIDE_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/pyodide.js`;
 
 const CORE_FILES = [
   "preprocessing.py",
