@@ -1,12 +1,3 @@
----
-title: Balloon IR Synthesizer
-emoji: "\U0001F388"
-colorFrom: yellow
-colorTo: yellow
-sdk: docker
-app_port: 7860
----
-
 # Balloon IR Synthesizer
 
 Convert balloon pop recordings into clean, full-bandwidth room impulse responses.
@@ -15,8 +6,7 @@ Based on Abel, Canfield-Dafilou & Holloway (2010), [*"Estimating Room Impulse Re
 
 ## Demo
 
-- **Web App**: [allenloves.github.io/balloon-ir](https://allenloves.github.io/balloon-ir/)
-- **API**: [allenloves-balloon-ir.hf.space](https://allenloves-balloon-ir.hf.space/docs)
+[allenloves.github.io/balloon-ir](https://allenloves.github.io/balloon-ir/) — runs entirely in the browser.
 
 ## Background
 
@@ -43,10 +33,6 @@ core/               DSP pipeline modules
   postprocessing.py   Stage 4: normalize, fade, trim, export
   pipeline.py         Orchestrates all stages
   visualization.py    Diagnostic plot generation
-api/                FastAPI web backend (legacy — used by the hosted demo)
-  main.py             App entry point + CORS
-  routes.py           Endpoints (process, status, result, preview)
-  tasks.py            Background job management
 frontend/           Static in-browser app (Pyodide; no backend required)
   index.html          UI
   src/main.js         Glue: upload, params, progress, audio playback
@@ -100,21 +86,17 @@ for details.
 
 ## Deployment
 
-| Component | Platform | URL |
-|-----------|----------|-----|
-| Frontend | GitHub Pages (static) | [allenloves.github.io/balloon-ir](https://allenloves.github.io/balloon-ir/) |
-| Backend (legacy) | Hugging Face Spaces (Docker) | [allenloves-balloon-ir.hf.space](https://allenloves-balloon-ir.hf.space/) |
-
-Auto-deploy on push to `main` via GitHub Actions. The frontend now ships as a
-purely static site (no build step) and includes the Python `core/` modules so
-Pyodide can load them client-side; the FastAPI backend is still deployed for
-anyone who needs the HTTP API.
+GitHub Pages — auto-deploy on push to `main` via GitHub Actions
+([`.github/workflows/deploy-frontend.yml`](.github/workflows/deploy-frontend.yml)).
+The site is purely static (no build step) and bundles the Python `core/`
+modules so Pyodide can load them client-side.
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.11+ (for the CLI and tests)
 - numpy, scipy, soundfile, matplotlib
-- FastAPI, uvicorn (only for the legacy HTTP backend in `api/`)
+
+The browser frontend has no Python prerequisite — Pyodide ships its own.
 
 ## References
 
