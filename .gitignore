@@ -33,16 +33,6 @@ Thumbs.db
 *.aiff
 *.ogg
 
-# Results / uploads
-uploads/
-results/
-jobs/
-
-# Frontend
-frontend/node_modules/
-frontend/dist/
-frontend/.env.local
-
 # Spec
 balloon-ir-spec.md
 

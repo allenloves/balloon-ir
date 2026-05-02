@@ -20,7 +20,7 @@ Plots:
 
 import numpy as np
 import matplotlib
-matplotlib.use("Agg")  # non-interactive backend for server-side rendering
+matplotlib.use("Agg")  # non-interactive backend (works in CLI and Pyodide)
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from typing import Optional
