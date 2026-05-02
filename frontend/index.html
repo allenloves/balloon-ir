@@ -64,6 +64,16 @@
         background: #fff;
       }
       label.file-pick:hover { border-color: var(--accent); color: var(--accent); }
+      label.file-pick.drag-over {
+        border-color: var(--accent);
+        border-style: solid;
+        background: #fff8e1;
+        color: var(--accent);
+      }
+      body.drag-active label.file-pick {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
       input[type="file"] { display: none; }
       .params {
         display: grid;
@@ -204,7 +214,7 @@
 
       <section>
         <label class="file-pick" for="file">
-          <span id="file-label">Click to choose a balloon-pop WAV…</span>
+          <span id="file-label">Click to choose, or drag a balloon-pop WAV here…</span>
           <input id="file" type="file" accept="audio/wav,.wav" />
         </label>
       </section>

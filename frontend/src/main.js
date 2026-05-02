@@ -34,8 +34,7 @@ function setProgress(pct, msg) {
   if (msg) log(msg);
 }
 
-fileInput.addEventListener("change", async () => {
-  const file = fileInput.files[0];
+async function loadFile(file) {
   if (!file) return;
   fileLabel.textContent = file.name;
   runBtn.disabled = true;
@@ -54,7 +53,60 @@ fileInput.addEventListener("change", async () => {
     log(`WAV decode failed: ${e.message}`);
     inputAudio = null;
   }
+}
+
+fileInput.addEventListener("change", () => loadFile(fileInput.files[0]));
+
+// Drag-and-drop: accept a WAV anywhere on the page. The dropzone label
+// just lights up; we don't restrict drops to it because dragging onto a
+// fixed target is fiddly when the page scrolls.
+const fileLabelEl = document.querySelector("label.file-pick");
+
+// Track nested dragenter/dragleave so the highlight doesn't flicker when
+// dragging across child elements (the count-based pattern below is the
+// standard fix).
+let dragDepth = 0;
+
+window.addEventListener("dragenter", (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth += 1;
+  document.body.classList.add("drag-active");
+  fileLabelEl.classList.add("drag-over");
 });
+
+window.addEventListener("dragover", (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+});
+
+window.addEventListener("dragleave", (e) => {
+  if (!hasFiles(e)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) {
+    document.body.classList.remove("drag-active");
+    fileLabelEl.classList.remove("drag-over");
+  }
+});
+
+window.addEventListener("drop", async (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove("drag-active");
+  fileLabelEl.classList.remove("drag-over");
+
+  const files = Array.from(e.dataTransfer.files);
+  // Pick the first WAV (by extension or MIME type); fall back to first file.
+  const wav = files.find((f) => /\.wave?$/i.test(f.name) || f.type === "audio/wav") || files[0];
+  if (!wav) return;
+  await loadFile(wav);
+});
+
+function hasFiles(e) {
+  return e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+}
 
 runBtn.addEventListener("click", async () => {
   if (!inputAudio) return;
